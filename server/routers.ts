@@ -131,6 +131,25 @@ export const appRouter = router({
         }
         return db.select().from(assets).where(filters.length ? and(...filters) : undefined).orderBy(desc(assets.updatedAt)).limit(input?.limit ?? 24);
       }),
+    submit: protectedProcedure.input(z.object({ name: z.string().trim().min(3).max(240), summary: z.string().trim().max(480).optional(), type: z.enum(["tool", "script", "automation", "source_code", "documentation", "sop", "config_template", "report", "runbook", "troubleshooting_guide", "knowledge"]), classification: z.enum(["internal", "confidential", "restricted"]).default("internal"), homeTeamId: z.string().uuid(), technology: z.string().trim().max(160).optional(), version: z.string().trim().min(1).max(48).default("0.1.0"), file: z.object({ fileKey: z.string().min(1).max(512), fileUrl: z.string().url(), fileName: z.string().min(1).max(255), contentType: z.string().min(1).max(160), sizeBytes: z.number().int().positive().max(524288000), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }).optional() })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      if (ctx.user.role === "team_member") {
+        const membership = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.userId, ctx.user.id), eq(teamMemberships.teamId, input.homeTeamId))).limit(1);
+        if (!membership.length) throw new Error("Team membership is required to submit to this team");
+      }
+      const assetId = crypto.randomUUID();
+      const assetKey = `ENG-${assetId.slice(0, 8).toUpperCase()}`;
+      await db.transaction(async tx => {
+        await tx.insert(assets).values({ id: assetId, assetKey, name: input.name, summary: input.summary ?? null, type: input.type, classification: input.classification, status: "pending_review", ownerId: ctx.user.id, homeTeamId: input.homeTeamId, technology: input.technology ?? null, currentVersion: input.version });
+        const version = (await tx.insert(assetVersions).values({ assetId, version: input.version, submittedById: ctx.user.id, releaseNotes: "Initial governed submission" }).returning())[0];
+        if (input.file) await tx.insert(assetFiles).values({ assetId, versionId: version?.id, uploadedById: ctx.user.id, fileName: input.file.fileName, storageKey: input.file.fileKey, storageUrl: input.file.fileUrl, contentType: input.file.contentType, extension: input.file.fileName.includes(".") ? input.file.fileName.split(".").pop()!.toLowerCase() : "bin", sizeBytes: input.file.sizeBytes, checksumSha256: input.file.checksumSha256, reviewStatus: "draft" });
+        const managers = await tx.select({ id: users.id }).from(users).innerJoin(teamMemberships, eq(teamMemberships.userId, users.id)).where(and(eq(users.role, "manager"), eq(users.isActive, true), eq(teamMemberships.teamId, input.homeTeamId))).limit(10);
+        if (managers.length) await tx.insert(notifications).values(managers.map(manager => ({ userId: manager.id, type: "review_submitted" as const, title: "New asset awaiting review", body: `${input.name} was submitted for Manager review.`, assetId })));
+        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_submitted", entityType: "asset", entityId: assetId, assetId, metadata: { teamId: input.homeTeamId, hasFile: Boolean(input.file) } });
+      });
+      return { success: true, assetId, status: "pending_review" as const };
+    }),
     publish: managerForTeamProcedure.input(z.object({ teamId: z.string().uuid(), assetId: z.string().uuid() })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
