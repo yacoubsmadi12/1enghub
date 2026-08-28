@@ -275,11 +275,14 @@ export const appRouter = router({
     managerQueue: managerProcedure.query(async ({ ctx }) => {
       const db = await getDb();
       if (!db) return [];
-      if (ctx.user.role === "top_manager") return db.select().from(assets).where(eq(assets.status, "pending_review")).orderBy(desc(assets.updatedAt));
-      const membershipRows = await db.select({ teamId: teamMemberships.teamId }).from(teamMemberships).where(eq(teamMemberships.userId, ctx.user.id));
-      const teamIds = membershipRows.map(row => row.teamId);
-      if (!teamIds.length) return [];
-      return db.select().from(assets).where(and(eq(assets.status, "pending_review"), inArray(assets.homeTeamId, teamIds))).orderBy(desc(assets.updatedAt));
+      const base = [eq(approvals.status, "pending"), eq(assets.status, "pending_review")];
+      if (ctx.user.role !== "top_manager") {
+        const membershipRows = await db.select({ teamId: teamMemberships.teamId }).from(teamMemberships).where(eq(teamMemberships.userId, ctx.user.id));
+        const teamIds = membershipRows.map(row => row.teamId);
+        if (!teamIds.length) return [];
+        base.push(inArray(assets.homeTeamId, teamIds));
+      }
+      return db.select({ approvalId: approvals.id, assetId: assets.id, assetKey: assets.assetKey, name: assets.name, type: assets.type, status: assets.status, homeTeamId: assets.homeTeamId, requestedAt: approvals.requestedAt }).from(approvals).innerJoin(assets, eq(approvals.assetId, assets.id)).where(and(...base)).orderBy(desc(approvals.requestedAt));
     }),
   }),
 });

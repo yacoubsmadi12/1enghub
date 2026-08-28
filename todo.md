@@ -80,6 +80,9 @@
 - [x] Route the main Create asset button and quick-create options to `/assets/new` instead of closing a placeholder modal.
 - [x] Add real pending-approval and team-work management views backed by PostgreSQL procedures.
 - [ ] Add tests for asset submission tags and manager approval/team-work management views.
-- [ ] Add approve, reject, and request-changes actions to the ENGHUB pending-approval management view.
-- [ ] Expand team-work management with scoped asset rows and role-appropriate actions.
-- [ ] Add loading, empty, and error states to all PostgreSQL-backed management sections.
+- [x] Add approve, reject, and request-changes actions to the ENGHUB pending-approval management view.
+- [x] Expand team-work management with scoped asset rows and role-appropriate actions.
+- [x] Add loading, empty, and error states to all PostgreSQL-backed management sections.
+- [ ] Add role-appropriate actions to scoped team-work asset rows, including review navigation for Managers and detail/share access where allowed.
+- [ ] Add explicit loading, error, and empty states for usersQuery in analytics and administrative views.
+- [ ] Add UI-oriented tests for approval actions, scoped team-work controls, and management-section states.
