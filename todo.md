@@ -78,5 +78,8 @@
 - [ ] Verify the audit trigger using a disposable local PostgreSQL database when available, otherwise retain a clearly marked pending operator verification step.
 - [x] Add tag selection and persistence to the governed asset submission flow.
 - [x] Route the main Create asset button and quick-create options to `/assets/new` instead of closing a placeholder modal.
-- [ ] Add real pending-approval and team-work management views backed by PostgreSQL procedures.
+- [x] Add real pending-approval and team-work management views backed by PostgreSQL procedures.
 - [ ] Add tests for asset submission tags and manager approval/team-work management views.
+- [ ] Add approve, reject, and request-changes actions to the ENGHUB pending-approval management view.
+- [ ] Expand team-work management with scoped asset rows and role-appropriate actions.
+- [ ] Add loading, empty, and error states to all PostgreSQL-backed management sections.
