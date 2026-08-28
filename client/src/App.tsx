@@ -6,6 +6,8 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import AssetDetail from "./pages/AssetDetail";
+import UserManagement from "./pages/UserManagement";
+import Section from "./pages/Section";
 
 function Router() {
   return (
@@ -13,6 +15,8 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/library" component={Home} />
       <Route path="/asset/:id" component={AssetDetail} />
+      <Route path="/admin/users" component={UserManagement} />
+      <Route path="/workspace/:section" component={Section} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

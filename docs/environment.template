@@ -8,3 +8,8 @@ JWT_SECRET=replace-with-a-long-random-secret
 OAUTH_SERVER_URL=https://api.manus.im
 VITE_APP_ID=replace-with-your-app-id
 VITE_OAUTH_PORTAL_URL=https://login.manus.im
+
+# Internal ENGHUB login hashes. Required in production; do not use plaintext passwords.
+ENGHUB_ADMIN_PASSWORD_HASH=CHANGE_SALT:CHANGE_HASH
+ENGHUB_MANAGER_PASSWORD_HASH=CHANGE_SALT:CHANGE_HASH
+ENGHUB_TEAM_MEMBER_PASSWORD_HASH=CHANGE_SALT:CHANGE_HASH

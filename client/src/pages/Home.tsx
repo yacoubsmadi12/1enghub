@@ -38,6 +38,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
+import { selectLiveOrDemo } from "@shared/demo-mode";
 
 type AssetStatus = "Active" | "Pending review" | "Draft" | "Changes requested";
 type Asset = {
@@ -65,21 +66,34 @@ const assets: Asset[] = [
 ];
 
 const navItems = [
-  { label: "Overview", icon: LayoutDashboard, active: true },
-  { label: "Asset library", icon: FolderKanban },
-  { label: "My assets", icon: GitBranch },
-  { label: "Shared with me", icon: Users2 },
-  { label: "Teams", icon: Users2 },
-  { label: "Knowledge hub", icon: Sparkles },
+  { label: "Overview", icon: LayoutDashboard, path: "/" },
+  { label: "Asset library", icon: FolderKanban, path: "/library" },
+  { label: "My assets", icon: GitBranch, path: "/workspace/my_assets" },
+  { label: "Shared with me", icon: Users2, path: "/workspace/shared_with_me" },
+  { label: "Teams", icon: Users2, path: "/admin/users" },
+  { label: "Knowledge hub", icon: Sparkles, path: "/workspace/knowledge_hub" },
 ];
 const governanceItems = [
-  { label: "Requests", icon: Clock3, count: "08" },
-  { label: "Approvals", icon: FileCheck2, count: "04" },
-  { label: "Analytics", icon: Activity },
-  { label: "Audit", icon: LockKeyhole },
-  { label: "Settings", icon: Settings2 },
+  { label: "Requests", icon: Clock3, count: "08", path: "/workspace/requests" },
+  { label: "Approvals", icon: FileCheck2, count: "04", path: "/workspace/approvals" },
+  { label: "Analytics", icon: Activity, path: "/workspace/analytics" },
+  { label: "Audit", icon: LockKeyhole, path: "/workspace/audit" },
+  { label: "Settings", icon: Settings2, path: "/workspace/settings" },
 ];
 const filterTypes = ["All types", "Automation", "Tool", "Runbook", "SOP", "Report"];
+const liveIconByType = { tool: Gauge, automation: Zap, runbook: FileText, sop: ShieldCheck, report: FileCheck2, knowledge_article: Sparkles } as const;
+function toUiAsset(asset: { id: string; assetKey: string; name: string; type: string; status: string; technology: string | null; currentVersion: string; ownerId: string; homeTeamId: string; estimatedHoursSaved: number; updatedAt: Date; classification: string }): Asset {
+  const type = asset.type.toLowerCase();
+  const status = asset.status === "pending_review" ? "Pending review" : asset.status === "changes_requested" ? "Changes requested" : asset.status === "draft" ? "Draft" : "Active";
+  return { id: asset.assetKey, name: asset.name, type: type === "knowledge_article" ? "Report" : type[0].toUpperCase() + type.slice(1), owner: asset.ownerId, team: asset.homeTeamId, version: `v${asset.currentVersion}`, status, usage: `${asset.estimatedHoursSaved}h saved`, technology: asset.technology || "Engineering", updated: new Date(asset.updatedAt).toLocaleDateString(), accent: type === "runbook" ? "amber" : type === "sop" ? "rose" : type === "tool" ? "violet" : "cyan", icon: liveIconByType[type as keyof typeof liveIconByType] || FileText };
+}
+
+function LoginScreen({ onDemo }: { onDemo: () => void }) {
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
+  const login = trpc.auth.internalLogin.useMutation({ onSuccess: () => window.location.reload() });
+  return <div className="login-screen"><div className="login-glow" /><div className="login-card"><div className="brand-mark"><span>EH</span></div><div className="mt-6 eyebrow"><LockKeyhole size={13} /> Internal ENGHUB access</div><h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Welcome to ENGHUB<span className="text-cyan-300">.</span></h1><p className="mt-3 text-sm leading-6 text-slate-400">Choose your workspace account. No Gmail or external email is required.</p><label className="mt-7 block text-[10px] uppercase tracking-widest text-slate-500">Username<select value={username} onChange={event => setUsername(event.target.value)} className="mt-2 h-11 w-full rounded-lg border border-white/10 bg-[#0e1928] px-3 text-sm text-white"><option value="admin">admin · Top Manager</option><option value="manager">manager · Manager</option><option value="team-member">team-member · Team Member</option></select></label><label className="mt-4 block text-[10px] uppercase tracking-widest text-slate-500">Password<input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Enter account password" className="mt-2 h-11 w-full rounded-lg border border-white/10 bg-[#0e1928] px-3 text-sm text-white placeholder:text-slate-600" /></label><Button disabled={login.isPending || password.length < 8} onClick={() => login.mutate({ username, password })} className="create-button mt-5 w-full">{login.isPending ? "Signing in..." : "Sign in to ENGHUB"} <ArrowUpRight size={15} /></Button>{login.error && <p className="mt-3 text-xs text-rose-300">{login.error.message}</p>}<button onClick={onDemo} className="mt-4 w-full text-xs font-semibold text-slate-500 hover:text-cyan-300">Preview demo workspace</button><div className="mt-8 grid grid-cols-3 gap-2 text-center text-[10px] text-slate-500"><span>Role-based</span><span>Auditable</span><span>PostgreSQL-ready</span></div></div></div>;
+}
 
 function StatusPill({ status }: { status: AssetStatus }) {
   const style = {
@@ -110,9 +124,15 @@ function AssetCard({ asset, onOpen }: { asset: Asset; onOpen: (asset: Asset) => 
 }
 
 export default function Home() {
-  const { user } = useAuth();
+  const auth = useAuth();
+  const { user } = auth;
+  const displayName = user?.name || "Yacoub Smadi";
+  const roleLabel = user?.role === "top_manager" ? "Top Manager" : user?.role === "manager" ? "Manager" : "Team Member";
+  const visibleNavItems = user?.role === "team_member" ? navItems.filter(item => ["Overview", "Asset library", "My assets", "Shared with me", "Knowledge hub"].includes(item.label)) : navItems;
+  const visibleGovernanceItems = user?.role === "team_member" ? governanceItems.filter(item => item.label === "Requests") : user?.role === "manager" ? governanceItems.filter(item => !["Audit", "Settings"].includes(item.label)) : governanceItems;
   const liveNotifications = trpc.notifications.list.useQuery(undefined, { enabled: Boolean(user), retry: false });
   const liveDashboard = trpc.dashboard.snapshot.useQuery(undefined, { enabled: Boolean(user), retry: false });
+  const liveAssets = trpc.assets.list.useQuery({ limit: 24 }, { enabled: Boolean(user), retry: false });
   const markNotificationRead = trpc.notifications.markRead.useMutation({ onSuccess: () => liveNotifications.refetch() });
   const [activeFilter, setActiveFilter] = useState("All types");
   const [lifecycleFilter, setLifecycleFilter] = useState("All statuses");
@@ -128,6 +148,7 @@ export default function Home() {
   const [showCreate, setShowCreate] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -144,7 +165,8 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  const filteredAssets = useMemo(() => assets.filter(asset => {
+  const sourceAssets = useMemo(() => selectLiveOrDemo({ authenticated: Boolean(user), fetched: liveAssets.isFetched, live: liveAssets.data?.map(toUiAsset), demo: assets }), [liveAssets.data, liveAssets.isFetched, user]);
+  const filteredAssets = useMemo(() => sourceAssets.filter(asset => {
     const matchesType = activeFilter === "All types" || asset.type === activeFilter;
     const matchesLifecycle = lifecycleFilter === "All statuses" || asset.status === lifecycleFilter;
     const matchesTeam = teamFilter === "All teams" || asset.team === teamFilter;
@@ -152,21 +174,24 @@ export default function Home() {
     const matchesClassification = classificationFilter === "All classifications" || classification === classificationFilter;
     const haystack = `${asset.name} ${asset.owner} ${asset.team} ${asset.technology}`.toLowerCase();
     return matchesType && matchesLifecycle && matchesTeam && matchesClassification && haystack.includes(query.toLowerCase());
-  }).sort((a, b) => sortBy === "Name" ? a.name.localeCompare(b.name) : sortBy === "Most used" ? b.usage.localeCompare(a.usage) : 0),[activeFilter, lifecycleFilter, teamFilter, classificationFilter, query, sortBy]);
+  }).sort((a, b) => sortBy === "Name" ? a.name.localeCompare(b.name) : sortBy === "Most used" ? b.usage.localeCompare(a.usage) : 0),[activeFilter, lifecycleFilter, teamFilter, classificationFilter, query, sortBy, sourceAssets]);
+
+  if (auth.loading) return <div className="login-screen"><div className="login-card text-center"><div className="brand-mark mx-auto"><span>EH</span></div><p className="mt-5 text-sm text-slate-400">Loading secure workspace...</p></div></div>;
+  if (!auth.isAuthenticated && !demoMode) return <LoginScreen onDemo={() => setDemoMode(true)} />;
 
   return <div className="enghub-app">
     <aside className={cn("sidebar", mobileNav && "sidebar-open")}>
       <div className="brand-row"><div className="brand-mark"><span>EH</span></div><div><div className="brand-name">ENGHUB</div><div className="brand-subtitle">Engineering memory</div></div><button onClick={() => setMobileNav(false)} className="ml-auto rounded-lg p-2 text-slate-500 lg:hidden"><X size={18} /></button></div>
       <div className="workspace-switch"><div className="workspace-avatar">N</div><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">Network Operations</div><div className="mt-0.5 text-[10px] text-slate-500">Engineering workspace</div></div><ChevronDown size={15} className="text-slate-600" /></div>
-      <div className="nav-label">Workspace</div><nav className="space-y-1">{navItems.map(item => <button key={item.label} className={cn("nav-item", item.active && "nav-item-active")}><item.icon size={17} /><span>{item.label}</span>{item.active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_#67e8f9]" />}</button>)}</nav>
-      <div className="nav-label mt-7">Governance</div><nav className="space-y-1">{governanceItems.map(item => <button key={item.label} className="nav-item"><item.icon size={17} /><span>{item.label}</span>{item.count && <span className="ml-auto rounded-md bg-white/[0.07] px-1.5 py-0.5 text-[10px] font-semibold text-slate-400">{item.count}</span>}</button>)}</nav>
-      <div className="sidebar-bottom"><div className="security-note"><div className="flex items-center gap-2 text-[11px] font-semibold text-cyan-200"><ShieldCheck size={15} /> Governed workspace</div><p className="mt-2 text-[11px] leading-5 text-slate-500">Every release is reviewed, traceable and owned.</p></div><div className="profile-row"><div className="profile-avatar">YS</div><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">Yacoub Smadi</div><div className="truncate text-[10px] text-slate-500">Team Member · RAN</div></div><MoreHorizontal size={17} className="text-slate-600" /></div></div>
+      <div className="nav-label">Workspace</div><nav className="space-y-1">{visibleNavItems.map(item => <button key={item.label} onClick={() => window.location.assign(item.label === "Teams" && user?.role !== "top_manager" ? "/workspace/teams" : item.path)} className={cn("nav-item", item.label === "Overview" && "nav-item-active")}><item.icon size={17} /><span>{item.label}</span>{item.label === "Overview" && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_#67e8f9]" />}</button>)}</nav>
+      <div className="nav-label mt-7">Governance</div><nav className="space-y-1">{visibleGovernanceItems.map(item => <button key={item.label} onClick={() => window.location.assign(item.path)} className="nav-item"><item.icon size={17} /><span>{item.label}</span>{item.count && <span className="ml-auto rounded-md bg-white/[0.07] px-1.5 py-0.5 text-[10px] font-semibold text-slate-400">{item.count}</span>}</button>)}</nav>
+      <div className="sidebar-bottom"><div className="security-note"><div className="flex items-center gap-2 text-[11px] font-semibold text-cyan-200"><ShieldCheck size={15} /> Governed workspace</div><p className="mt-2 text-[11px] leading-5 text-slate-500">Every release is reviewed, traceable and owned.</p></div><div className="profile-row"><div className="profile-avatar">YS</div><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">{displayName}</div><div className="truncate text-[10px] text-slate-500">{roleLabel} · RAN</div></div><MoreHorizontal size={17} className="text-slate-600" /></div></div>
     </aside>
     <main className="main-shell">
       <header className="topbar"><div className="flex items-center gap-3"><button onClick={() => setMobileNav(true)} className="rounded-lg border border-white/[0.08] p-2 text-slate-400 lg:hidden"><Menu size={18} /></button><div className="breadcrumb"><span className="text-slate-500">Workspace</span><span className="text-slate-700">/</span><span className="text-slate-200">Overview</span></div></div><div className="topbar-actions"><button className="command-search" onClick={() => setCommandOpen(true)}><Search size={15} /><span>Search assets...</span><kbd><Command size={11} /> K</kbd></button><button aria-label="Open notifications" className="top-icon" onClick={() => setNotificationsOpen(!notificationsOpen)}><Bell size={17} /><span className="notification-dot" /></button><Button onClick={() => setShowCreate(true)} className="create-button"><Plus size={16} /> <span className="hidden sm:inline">Create asset</span></Button></div></header>
       <div className="page-content">
         <div className="demo-banner"><span className="h-1.5 w-1.5 rounded-full bg-amber-300" /><span>Demo workspace</span><span className="text-slate-600">·</span><span className="text-slate-500">Connect PostgreSQL to replace sample metrics with live data</span><button className="ml-auto text-slate-500 hover:text-cyan-300">View setup</button></div>
-        <section className="hero-row"><div><div className="eyebrow"><Sparkles size={13} /> Engineering intelligence</div><h1 className="page-title">Good morning, Yacoub<span className="text-cyan-300">.</span></h1><p className="page-lede">A clear view of what your teams are building, reviewing, and putting to work.</p></div><div className="hero-status"><div className="status-orb"><div className="status-orb-inner"><ShieldCheck size={20} /></div></div><div><div className="text-xs font-semibold text-white">Workspace health</div><div className="mt-1 flex items-center gap-2 text-[11px] text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> All systems governed</div></div></div></section>
+        <section className="hero-row"><div><div className="eyebrow"><Sparkles size={13} /> Engineering intelligence</div><h1 className="page-title">Good morning, {displayName.split(" ")[0]}<span className="text-cyan-300">.</span></h1><p className="page-lede">A clear view of what your teams are building, reviewing, and putting to work.</p></div><div className="hero-status"><div className="status-orb"><div className="status-orb-inner"><ShieldCheck size={20} /></div></div><div><div className="text-xs font-semibold text-white">Workspace health</div><div className="mt-1 flex items-center gap-2 text-[11px] text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> All systems governed</div></div></div></section>
         <section className="metrics-grid"><MetricCard label="Total digital assets" value={(liveDashboard.data?.totalAssets ?? 1248).toLocaleString()} delta={liveDashboard.data ? "Live" : "+8.4%"} icon={FolderKanban} tone="tone-cyan" /><MetricCard label="Active tools" value={(liveDashboard.data?.activeAssets ?? 86).toLocaleString()} delta={liveDashboard.data ? "Live" : "+12.1%"} icon={Zap} tone="tone-violet" /><MetricCard label="Pending approvals" value={String(liveDashboard.data?.pendingApprovals ?? 4).padStart(2, "0")} delta={liveDashboard.data ? "Live" : "Needs attention"} icon={FileCheck2} tone="tone-amber" /><MetricCard label="Hours saved this quarter" value="12,840h" delta="+16.8%" icon={Clock3} tone="tone-emerald" /></section>
         <section className="workspace-grid"><div className="library-panel panel-surface"><div className="section-heading"><div><div className="eyebrow">Curated library</div><h2>Recent assets</h2></div><Link href="/library" className="text-xs font-semibold text-cyan-300 hover:text-cyan-200">View library <ArrowUpRight className="ml-1 inline" size={14} /></Link></div><div className="library-toolbar"><div className="relative min-w-0 flex-1"><Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" /><Input id="asset-search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name, team, technology..." className="search-input pl-9" /></div><div className="filter-pills hidden xl:flex">{filterTypes.slice(0, 4).map(filter => <button key={filter} onClick={() => setActiveFilter(filter)} className={cn("filter-pill", activeFilter === filter && "filter-pill-active")}>{filter}</button>)}</div><button onClick={() => setShowFilters(!showFilters)} className={cn("filter-button", showFilters && "filter-button-active")}><SlidersHorizontal size={15} /><span className="hidden sm:inline">Filters</span></button><button aria-label={listView ? "Use grid view" : "Use list view"} onClick={() => setListView(!listView)} className={cn("view-button", listView && "view-button-active")}><ListFilter size={16} /></button></div>{showFilters && <div className="advanced-filters"><div><label>Asset type</label><select value={activeFilter} onChange={e => setActiveFilter(e.target.value)}><option>All types</option>{filterTypes.slice(1).map(filter => <option key={filter}>{filter}</option>)}</select></div><div><label>Lifecycle</label><select value={lifecycleFilter} onChange={e => setLifecycleFilter(e.target.value)}><option>All statuses</option><option>Active</option><option>Pending review</option><option>Changes requested</option><option>Draft</option></select></div><div><label>Sort by</label><select value={sortBy} onChange={e => setSortBy(e.target.value)}><option>Recently updated</option><option>Name</option><option>Most used</option></select></div><div><label>Team</label><select value={teamFilter} onChange={e => setTeamFilter(e.target.value)}><option>All teams</option><option>RAN Engineering</option><option>Core Engineering</option><option>Transport Engineering</option><option>OSS Engineering</option><option>Security Engineering</option><option>Automation Team</option></select></div><div><label>Classification</label><select value={classificationFilter} onChange={e => setClassificationFilter(e.target.value)}><option>All classifications</option><option>Internal</option><option>Confidential</option><option>Restricted</option></select></div></div>}<div className={cn("asset-grid", listView && "asset-grid-list")}>{filteredAssets.map(asset => <AssetCard key={asset.id} asset={asset} onOpen={setSelected} />)}</div>{filteredAssets.length === 0 && <div className="empty-state"><Search size={25} /><p>No assets match your current filters.</p><button onClick={() => { setQuery(""); setActiveFilter("All types"); setLifecycleFilter("All statuses"); setTeamFilter("All teams"); setClassificationFilter("All classifications"); }} className="text-xs font-semibold text-cyan-300">Clear filters</button></div>}</div>
           <aside className="right-rail"><div className="panel-surface review-panel"><div className="section-heading"><div><div className="eyebrow">Governance queue</div><h2>Review attention</h2></div><span className="queue-count">04</span></div><div className="review-list"><div className="review-item"><div className="review-icon review-amber"><FileCheck2 size={16} /></div><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">IPRAN Troubleshooting Runbook</div><div className="mt-1 text-[11px] text-slate-500">Awaiting Manager review</div></div><span className="text-[10px] text-amber-200">1d</span></div><div className="review-item"><div className="review-icon review-cyan"><GitBranch size={16} /></div><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">FTTH Report Automation</div><div className="mt-1 text-[11px] text-slate-500">New version submitted</div></div><span className="text-[10px] text-slate-500">3d</span></div><div className="review-item"><div className="review-icon review-rose"><FileText size={16} /></div><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">Network Change SOP</div><div className="mt-1 text-[11px] text-slate-500">Changes requested</div></div><span className="text-[10px] text-rose-300">2d</span></div></div><Button variant="outline" className="review-button">Open approval center <ArrowUpRight size={14} /></Button></div><div className="panel-surface activity-panel"><div className="section-heading"><div><div className="eyebrow">Live trail</div><h2>Recent activity</h2></div><Activity size={17} className="text-slate-600" /></div><div className="activity-list"><div className="activity-line"><div className="activity-avatar avatar-cyan">LM</div><div><p><strong>Lina</strong> published <strong>NCE Configuration Tool</strong></p><span>12 minutes ago</span></div></div><div className="activity-line"><div className="activity-avatar avatar-violet">MK</div><div><p><strong>Maha</strong> uploaded a new version</p><span>1 hour ago</span></div></div><div className="activity-line"><div className="activity-avatar avatar-amber">KN</div><div><p><strong>Kareem</strong> requested a review</p><span>Yesterday</span></div></div></div></div></aside>

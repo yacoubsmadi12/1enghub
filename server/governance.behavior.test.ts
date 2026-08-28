@@ -17,4 +17,23 @@ describe("ENGHUB governance behavior", () => {
     const caller = appRouter.createCaller(context("team_member"));
     await expect(caller.notifications.list()).resolves.toEqual([]);
   });
+
+  it("allows a Top Manager to access administration read procedures", async () => {
+    const caller = appRouter.createCaller(context("top_manager"));
+    await expect(caller.administration.listUsers()).resolves.toEqual([]);
+    await expect(caller.administration.listTeams()).resolves.toEqual([]);
+  });
+
+  it("denies every administration procedure to a Team Member", async () => {
+    const caller = appRouter.createCaller(context("team_member"));
+    await expect(caller.administration.listUsers()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.administration.listTeams()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.administration.setActive({ userId: "00000000-0000-4000-8000-000000000002", isActive: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.administration.assignTeam({ userId: "00000000-0000-4000-8000-000000000002", teamId: "00000000-0000-4000-8000-000000000003", isPrimary: true })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("denies role changes to a Manager", async () => {
+    const caller = appRouter.createCaller(context("manager"));
+    await expect(caller.administration.changeRole({ userId: "00000000-0000-4000-8000-000000000002", role: "team_member" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
 });

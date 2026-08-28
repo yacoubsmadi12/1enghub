@@ -41,11 +41,34 @@
 - [ ] Add sharing UI and procedure-level tests for same-team and cross-team actions.
 - [x] Add notification list/read APIs and a notification center UI.
 - [x] Add role-change procedures with audit logging and protect audit history from modification/deletion.
-- [ ] Wire dashboard and library content to tRPC PostgreSQL queries with safe demo fallback.
+- [x] Wire dashboard and library content to tRPC PostgreSQL queries with safe demo fallback.
 - [x] Wire lifecycle, team, and classification filters into the asset filtering logic used by the library and command palette.
 - [x] Connect the notification center UI to the PostgreSQL notification list and read procedures with loading, empty, and error states.
 - [x] Add explicit backend protections and tests proving audit entries cannot be modified or removed.
 - [ ] Add tests for allowed and denied role changes and notification list/read behavior.
-- [ ] Build a dedicated asset detail route/page wired to real asset data, including metadata, versions, files, related assets, recent activity, and audit history.
-- [ ] Add Vitest coverage for dedicated asset detail route behavior.
+- [x] Build a dedicated asset detail route/page wired to real asset data, including metadata, versions, files, related assets, recent activity, and audit history.
+- [x] Add Vitest coverage for dedicated asset detail route behavior.
 - [ ] Verify append-only audit protection through the PostgreSQL migration path and document a safe non-PostgreSQL fallback guard.
+- [ ] Link asset cards and command-palette results to `/asset/:id` so the dedicated detail page is reachable from the library.
+- [ ] Render a dedicated recent-activity section separately from the audit history on asset details.
+- [ ] Add route-level coverage for detail loading, empty, and data presentation behavior.
+- [x] Add a dedicated ENGHUB login screen with session-aware loading, sign-in, and sign-out states.
+- [x] Replace the demo-only identity display with the authenticated user profile and role label.
+- [x] Add PostgreSQL-backed user management APIs for listing users, assigning roles, activating/deactivating users, and managing team memberships.
+- [x] Build the user management screen with Top Manager-only access and explicit role/team controls.
+- [x] Define and enforce the complete visibility matrix for Top Managers, Managers, and Team Members in the UI and backend.
+- [x] Connect sidebar sections to working routes or intentional role-aware empty states instead of inert buttons.
+- [ ] Add tests for login states, role visibility, user-management authorization, and route access.
+- [x] Replace OAuth/Gmail login entry with internal username login for `admin`, `manager`, and `team-member`.
+- [x] Persist internal login identities and role mapping safely in PostgreSQL without storing plaintext passwords.
+- [x] Add session-backed internal login/logout procedures and protect every role-sensitive route server-side.
+- [x] Show clear role labels and credentials guidance on the ENGHUB login screen without exposing secrets.
+- [x] Add tests proving account-to-role mapping and denial of invalid usernames or unauthorized roles.
+- [x] Remove unauthorized OAuth auto-login redirects and make internal authentication the only ENGHUB login entry.
+- [x] Require a password or secret for each internal account and verify a salted hash server-side before issuing a session.
+- [x] Add safe environment placeholders for internal account password hashes without committing plaintext credentials.
+- [x] Add tests proving username-only login cannot mint admin, manager, or team-member sessions and invalid credentials are denied.
+- [x] Re-verify all role-sensitive procedures against the secured internal authentication flow.
+- [ ] Add explicit secured-auth tests for administration listUsers, listTeams, setActive, assignTeam, and changeRole authorization.
+- [ ] Add secured-auth procedure tests for same-team and cross-team review and sharing allow/deny behavior.
+- [ ] Add route/access tests proving Top Manager, Manager, and Team Member visibility under internal authentication.

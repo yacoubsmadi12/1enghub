@@ -1,8 +1,11 @@
 import { COOKIE_NAME } from "@shared/const";
 import { and, count, desc, eq, ilike, inArray, or } from "drizzle-orm";
 import { z } from "zod";
-import { approvals, assetFiles, assetRelations, assetShares, assetVersions, assets, auditEvents, notifications, teamMemberships, users } from "../drizzle/schema";
+import { approvals, assetFiles, assetRelations, assetShares, assetVersions, assets, auditEvents, notifications, teamMemberships, teams, users } from "../drizzle/schema";
 import { decisionToAssetStatus, canSubmitForReview } from "./workflow";
+import { getInternalAccount } from "@shared/internal-auth";
+import { sdk } from "./_core/sdk";
+import { verifyInternalCredentials } from "./internalAuth";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { getDb } from "./db";
 import { systemRouter } from "./_core/systemRouter";
@@ -11,6 +14,20 @@ import { adminProcedure, managerForTeamProcedure, managerProcedure, protectedPro
 export const appRouter = router({
   system: systemRouter,
   auth: router({
+    internalLogin: publicProcedure.input(z.object({ username: z.string().trim().min(3).max(32), password: z.string().min(8).max(128) })).mutation(async ({ input, ctx }) => {
+      const account = verifyInternalCredentials(input.username, input.password);
+      if (!account) throw new Error("Invalid ENGHUB username or password");
+      const token = await sdk.signSession({ openId: account.openId, appId: process.env.VITE_APP_ID || "enghub", name: account.name });
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(COOKIE_NAME, token, { ...cookieOptions, maxAge: 1000 * 60 * 60 * 12 });
+      const db = await getDb();
+      if (db) {
+        try {
+          await db.insert(users).values({ id: account.id, openId: account.openId, name: account.name, email: null, loginMethod: "internal_username", role: account.role, isActive: true }).onConflictDoUpdate({ target: users.openId, set: { name: account.name, role: account.role, lastSignedIn: new Date(), updatedAt: new Date() } });
+        } catch (error) { console.warn("[Auth] Internal account persistence deferred:", error); }
+      }
+      return { success: true, username: input.username, role: account.role } as const;
+    }),
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
@@ -44,6 +61,30 @@ export const appRouter = router({
     }),
   }),
   administration: router({
+    listUsers: adminProcedure.query(async () => {
+      const db = await getDb();
+      if (!db) return [];
+      return db.select({ id: users.id, name: users.name, email: users.email, role: users.role, isActive: users.isActive, lastSignedIn: users.lastSignedIn }).from(users).orderBy(users.name);
+    }),
+    listTeams: adminProcedure.query(async () => {
+      const db = await getDb();
+      if (!db) return [];
+      return db.select({ id: teams.id, name: teams.name, code: teams.code, isActive: teams.isActive }).from(teams).orderBy(teams.name);
+    }),
+    setActive: adminProcedure.input(z.object({ userId: z.string().uuid(), isActive: z.boolean() })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      await db.update(users).set({ isActive: input.isActive, updatedAt: new Date() }).where(eq(users.id, input.userId));
+      await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: input.userId, metadata: { field: "isActive", value: input.isActive } });
+      return { success: true };
+    }),
+    assignTeam: adminProcedure.input(z.object({ userId: z.string().uuid(), teamId: z.string().uuid(), isPrimary: z.boolean().default(false) })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      await db.insert(teamMemberships).values({ userId: input.userId, teamId: input.teamId, isPrimary: input.isPrimary });
+      await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "team_membership", entityId: input.userId, metadata: { teamId: input.teamId, isPrimary: input.isPrimary } });
+      return { success: true };
+    }),
     changeRole: adminProcedure.input(z.object({ userId: z.string().uuid(), role: z.enum(["top_manager", "manager", "team_member"]) })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");

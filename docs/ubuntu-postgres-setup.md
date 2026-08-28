@@ -117,3 +117,17 @@ NODE_ENV=production pnpm start
 ## 8. فرق محرك قاعدة البيانات في بيئة المعاينة
 
 بيئة المعاينة المُدارة قد تعرض اتصالاً متوافقاً مع TiDB/MySQL، بينما النسخة القابلة للتنزيل من ENGHUB مبنية على PostgreSQL كما طلبت. لذلك يجب تطبيق `drizzle/0001_audit_immutability.sql` على PostgreSQL في Ubuntu بعد `drizzle/0000_workable_gambit.sql`. هذا الملف يضيف حماية append-only لسجل التدقيق، ولن يعمل على اتصال TiDB/MySQL.
+
+## 9. الدخول الداخلي للحسابات
+
+الدخول من واجهة ENGHUB لا يستخدم Gmail. الحسابات الداخلية هي `admin` لدور Top Manager، و`manager` لدور Manager، و`team-member` لدور Team Member. في بيئة التطوير المحلية فقط توجد كلمات مرور تجريبية افتراضية: `admin-dev-only` و`manager-dev-only` و`team-member-dev-only`.
+
+في الإنتاج، يجب تعريف قيم hash منفصلة وعدم استخدام كلمات المرور التجريبية. الصيغة المطلوبة لكل متغير هي `salt:sha256(salt:password)`:
+
+```bash
+export ENGHUB_ADMIN_PASSWORD_HASH='CHANGE_SALT:CHANGE_HASH'
+export ENGHUB_MANAGER_PASSWORD_HASH='CHANGE_SALT:CHANGE_HASH'
+export ENGHUB_TEAM_MEMBER_PASSWORD_HASH='CHANGE_SALT:CHANGE_HASH'
+```
+
+استخدم مولد hash موثوقاً على الخادم، واحفظ هذه القيم خارج Git وبصلاحيات مقيدة. إذا لم توجد hashes في بيئة `production` فسيرفض التطبيق تسجيل الدخول، ولن يستطيع أي زائر افتراض دور `admin` بمجرد كتابة اسم المستخدم.

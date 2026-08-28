@@ -7,6 +7,7 @@ import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
+import { getInternalAccount } from "@shared/internal-auth";
 import type {
   ExchangeTokenRequest,
   ExchangeTokenResponse,
@@ -283,6 +284,18 @@ class SDKServer {
         throw ForbiddenError("Cron session missing task_uid");
       }
       return buildCronUser(userInfo);
+    }
+
+    const internalAccount = session.openId.startsWith("internal:") ? getInternalAccount(session.openId.slice("internal:".length)) : null;
+    if (internalAccount) {
+      const now = new Date();
+      if (process.env.ENGHUB_DATABASE_URL) {
+        try {
+          const stored = await db.getUserByOpenId(internalAccount.openId);
+          if (stored) return stored;
+        } catch (error) { console.warn("[Auth] Internal account lookup deferred:", error); }
+      }
+      return { id: internalAccount.id, openId: internalAccount.openId, name: internalAccount.name, email: null, loginMethod: "internal_username", role: internalAccount.role, isActive: true, createdAt: now, updatedAt: now, lastSignedIn: now };
     }
 
     const sessionUserId = session.openId;
