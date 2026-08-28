@@ -1,7 +1,7 @@
 import { COOKIE_NAME } from "@shared/const";
 import { and, count, desc, eq, ilike, inArray, or } from "drizzle-orm";
 import { z } from "zod";
-import { approvals, assetFiles, assetShares, assets, auditEvents, notifications, teamMemberships, users } from "../drizzle/schema";
+import { approvals, assetFiles, assetRelations, assetShares, assetVersions, assets, auditEvents, notifications, teamMemberships, users } from "../drizzle/schema";
 import { decisionToAssetStatus, canSubmitForReview } from "./workflow";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { getDb } from "./db";
@@ -57,6 +57,23 @@ export const appRouter = router({
     }),
   }),
   assets: router({
+    get: protectedProcedure.input(z.object({ assetId: z.string().uuid() })).query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return null;
+      const asset = (await db.select().from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
+      if (!asset) return null;
+      if (ctx.user.role !== "top_manager") {
+        const membership = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.teamId, asset.homeTeamId), eq(teamMemberships.userId, ctx.user.id))).limit(1);
+        if (asset.ownerId !== ctx.user.id && membership.length === 0) throw new Error("Asset is outside your team scope");
+      }
+      const [versions, files, relations, activity] = await Promise.all([
+        db.select().from(assetVersions).where(eq(assetVersions.assetId, asset.id)).orderBy(desc(assetVersions.createdAt)),
+        db.select().from(assetFiles).where(eq(assetFiles.assetId, asset.id)).orderBy(desc(assetFiles.createdAt)),
+        db.select().from(assetRelations).where(or(eq(assetRelations.sourceAssetId, asset.id), eq(assetRelations.targetAssetId, asset.id))).orderBy(desc(assetRelations.createdAt)),
+        db.select().from(auditEvents).where(eq(auditEvents.assetId, asset.id)).orderBy(desc(auditEvents.createdAt)).limit(30),
+      ]);
+      return { asset, versions, files, relations, activity };
+    }),
     list: protectedProcedure
       .input(z.object({ query: z.string().trim().max(120).optional(), type: z.string().max(48).optional(), status: z.string().max(48).optional(), limit: z.number().int().min(1).max(100).default(24) }).optional())
       .query(async ({ input, ctx }) => {

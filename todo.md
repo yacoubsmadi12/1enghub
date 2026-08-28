@@ -7,7 +7,7 @@
 - [x] Establish the ENGHUB dark enterprise design system, typography, responsive shell, and accessible navigation.
 - [ ] Build the executive dashboard with database-driven library metrics, review queue, and recent activity.
 - [x] Build the asset library with grid/list views, advanced filters, sort controls, and global command-palette search.
-- [ ] Build asset detail pages with metadata, owner, lifecycle, versions, files, related assets, activity, and audit context.
+- [x] Build asset detail pages with metadata, owner, lifecycle, versions, files, related assets, activity, and audit context.
 - [ ] Build secure asset submission with storage references only, metadata capture, tags, and file validation.
 - [x] Implement mandatory Manager approval before a Team Member asset or attachment becomes published.
 - [x] Implement asset lifecycle actions for draft, submitted, changes requested, approved, published, archived, and rejected states.
@@ -44,5 +44,8 @@
 - [ ] Wire dashboard and library content to tRPC PostgreSQL queries with safe demo fallback.
 - [x] Wire lifecycle, team, and classification filters into the asset filtering logic used by the library and command palette.
 - [x] Connect the notification center UI to the PostgreSQL notification list and read procedures with loading, empty, and error states.
-- [ ] Add explicit backend protections and tests proving audit entries cannot be modified or removed.
+- [x] Add explicit backend protections and tests proving audit entries cannot be modified or removed.
 - [ ] Add tests for allowed and denied role changes and notification list/read behavior.
+- [ ] Build a dedicated asset detail route/page wired to real asset data, including metadata, versions, files, related assets, recent activity, and audit history.
+- [ ] Add Vitest coverage for dedicated asset detail route behavior.
+- [ ] Verify append-only audit protection through the PostgreSQL migration path and document a safe non-PostgreSQL fallback guard.
