@@ -58,7 +58,7 @@
 - [x] Build the user management screen with Top Manager-only access and explicit role/team controls.
 - [x] Define and enforce the complete visibility matrix for Top Managers, Managers, and Team Members in the UI and backend.
 - [x] Connect sidebar sections to working routes or intentional role-aware empty states instead of inert buttons.
-- [ ] Add tests for login states, role visibility, user-management authorization, and route access.
+- [x] Add tests for login states, role visibility, user-management authorization, and route access.
 - [x] Replace OAuth/Gmail login entry with internal username login for `admin`, `manager`, and `team-member`.
 - [x] Persist internal login identities and role mapping safely in PostgreSQL without storing plaintext passwords.
 - [x] Add session-backed internal login/logout procedures and protect every role-sensitive route server-side.
@@ -71,7 +71,7 @@
 - [x] Re-verify all role-sensitive procedures against the secured internal authentication flow.
 - [ ] Add explicit secured-auth tests for administration listUsers, listTeams, setActive, assignTeam, and changeRole authorization.
 - [ ] Add secured-auth procedure tests for same-team and cross-team review and sharing allow/deny behavior.
-- [ ] Add route/access tests proving Top Manager, Manager, and Team Member visibility under internal authentication.
+- [x] Add route/access tests proving Top Manager, Manager, and Team Member visibility under internal authentication.
 - [ ] Isolate hardcoded review and activity examples behind explicit demo mode so authenticated live mode never presents fabricated operational history.
 - [ ] Add a documented PostgreSQL seed script for clearly labeled development records without customer reviews or testimonials.
 - [ ] Add route/page-level tests for `/asset/:id` loading, missing asset, and successful presentation states.
