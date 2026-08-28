@@ -1,5 +1,13 @@
 {
   "version": "7",
-  "dialect": "mysql",
-  "entries": []
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1787919245540,
+      "tag": "0000_workable_gambit",
+      "breakpoints": true
+    }
+  ]
 }

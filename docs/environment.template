@@ -1,0 +1,10 @@
+# ENGHUB server configuration template
+# Copy these keys into your local Ubuntu environment or a protected .env file.
+# Never commit the real values.
+ENGHUB_DATABASE_URL=postgresql://enghub_app:CHANGE_ME@127.0.0.1:5432/enghub?sslmode=disable
+
+# Standalone deployments also need the authentication/runtime values supplied by your auth provider.
+JWT_SECRET=replace-with-a-long-random-secret
+OAUTH_SERVER_URL=https://api.manus.im
+VITE_APP_ID=replace-with-your-app-id
+VITE_OAUTH_PORTAL_URL=https://login.manus.im

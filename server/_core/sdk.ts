@@ -333,18 +333,19 @@ function buildCronUser(
 ): AuthenticatedUser {
   const now = new Date();
   return {
-    id: -1,
+    id: "00000000-0000-0000-0000-000000000001",
     openId: userInfo.openId,
     name: userInfo.name || "Manus Scheduled Task",
     email: null,
     loginMethod: null,
-    role: "user",
+    role: "top_manager",
+    isActive: true,
     createdAt: now,
     updatedAt: now,
     lastSignedIn: now,
     taskUid: userInfo.taskUid ?? undefined,
     isCron: true,
-  } as AuthenticatedUser;
+  };
 }
 
 export const sdk = new SDKServer();

@@ -1,0 +1,31 @@
+# Project TODO
+
+- [x] Define the ENGHUB authorization model for Top Managers, Managers, and Team Members.
+- [x] Design the PostgreSQL schema for teams, memberships, assets, versions, files, tags, approvals, sharing, notifications, and audit events.
+- [x] Configure the application data layer for PostgreSQL and document Ubuntu runtime requirements.
+- [x] Implement database-backed authorization guards and unit tests for role and team-scope rules.
+- [x] Establish the ENGHUB dark enterprise design system, typography, responsive shell, and accessible navigation.
+- [ ] Build the executive dashboard with database-driven library metrics, review queue, and recent activity.
+- [ ] Build the asset library with grid/list views, advanced filters, sort controls, and global command-palette search.
+- [ ] Build asset detail pages with metadata, owner, lifecycle, versions, files, related assets, activity, and audit context.
+- [ ] Build secure asset submission with storage references only, metadata capture, tags, and file validation.
+- [ ] Implement mandatory Manager approval before a Team Member asset or attachment becomes published.
+- [ ] Implement asset lifecycle actions for draft, submitted, changes requested, approved, published, archived, and rejected states.
+- [ ] Implement sharing controls for an owner to share an approved asset with the home team or another team.
+- [ ] Build management views for team work, pending approvals, user roles, and access governance.
+- [ ] Build notifications for review submission, approval, rejection, and requested changes.
+- [ ] Build an immutable audit trail for high-risk asset, sharing, approval, and role events.
+- [ ] Seed only clearly labeled development data from the database; never use fabricated customer reviews or testimonials.
+- [x] Add automated tests, type checks, and visual verification for main responsive flows.
+- [x] Write a professional Ubuntu and PostgreSQL deployment guide with secrets, migrations, service setup, and security considerations.
+- [x] Prepare Ubuntu installation commands for PostgreSQL, Node.js, pnpm, and ENGHUB runtime prerequisites.
+- [x] Document secure PostgreSQL database/user creation and the ENGHUB_DATABASE_URL configuration.
+- [ ] Validate the Ubuntu installation path and PostgreSQL connectivity before applying migrations.
+- [x] Make ENGHUB runnable in the current environment without requiring the user's PostgreSQL connection.
+- [x] Include a downloadable PostgreSQL schema/migration and environment.template with safe placeholders.
+- [ ] Add a README section for downloading, configuring, migrating, and starting ENGHUB on Ubuntu.
+- [ ] Keep demo data clearly labeled and replaceable by PostgreSQL-backed queries when the user connects the database.
+- [ ] Add protected/backend tRPC authorization middleware for Top Managers, Managers, and Team Members with real team-membership checks from PostgreSQL.
+- [ ] Wire authorization guards into asset, review, and sharing procedures with same-team versus cross-team coverage.
+- [ ] Ensure role-permission tests are included in the default pnpm test command.
+- [ ] Add automated coverage for key dashboard/library interactions and detail modal behavior.
