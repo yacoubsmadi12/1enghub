@@ -15,7 +15,7 @@
 - [ ] Build management views for team work, pending approvals, user roles, and access governance.
 - [x] Build notifications for review submission, approval, rejection, and requested changes.
 - [x] Build an immutable audit trail for high-risk asset, sharing, approval, and role events.
-- [ ] Seed only clearly labeled development data from the database; never use fabricated customer reviews or testimonials.
+- [x] Seed only clearly labeled development data from the database; never use fabricated customer reviews or testimonials.
 - [x] Add automated tests, type checks, and visual verification for main responsive flows.
 - [x] Write a professional Ubuntu and PostgreSQL deployment guide with secrets, migrations, service setup, and security considerations.
 - [x] Prepare Ubuntu installation commands for PostgreSQL, Node.js, pnpm, and ENGHUB runtime prerequisites.
@@ -48,10 +48,10 @@
 - [ ] Add tests for allowed and denied role changes and notification list/read behavior.
 - [x] Build a dedicated asset detail route/page wired to real asset data, including metadata, versions, files, related assets, recent activity, and audit history.
 - [x] Add Vitest coverage for dedicated asset detail route behavior.
-- [ ] Verify append-only audit protection through the PostgreSQL migration path and document a safe non-PostgreSQL fallback guard.
-- [ ] Link asset cards and command-palette results to `/asset/:id` so the dedicated detail page is reachable from the library.
+- [x] Verify append-only audit protection through the PostgreSQL migration path and document a safe non-PostgreSQL fallback guard.
+- [x] Link asset cards and command-palette results to `/asset/:id` so the dedicated detail page is reachable from the library.
 - [ ] Render a dedicated recent-activity section separately from the audit history on asset details.
-- [ ] Add route-level coverage for detail loading, empty, and data presentation behavior.
+- [x] Add route-level coverage for detail loading, empty, and data presentation behavior.
 - [x] Add a dedicated ENGHUB login screen with session-aware loading, sign-in, and sign-out states.
 - [x] Replace the demo-only identity display with the authenticated user profile and role label.
 - [x] Add PostgreSQL-backed user management APIs for listing users, assigning roles, activating/deactivating users, and managing team memberships.
@@ -72,3 +72,7 @@
 - [ ] Add explicit secured-auth tests for administration listUsers, listTeams, setActive, assignTeam, and changeRole authorization.
 - [ ] Add secured-auth procedure tests for same-team and cross-team review and sharing allow/deny behavior.
 - [ ] Add route/access tests proving Top Manager, Manager, and Team Member visibility under internal authentication.
+- [ ] Isolate hardcoded review and activity examples behind explicit demo mode so authenticated live mode never presents fabricated operational history.
+- [ ] Add a documented PostgreSQL seed script for clearly labeled development records without customer reviews or testimonials.
+- [ ] Add route/page-level tests for `/asset/:id` loading, missing asset, and successful presentation states.
+- [ ] Verify the audit trigger using a disposable local PostgreSQL database when available, otherwise retain a clearly marked pending operator verification step.
