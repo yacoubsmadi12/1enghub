@@ -5,6 +5,7 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import AssetCreate from "./pages/AssetCreate";
 import AssetDetail from "./pages/AssetDetail";
 import UserManagement from "./pages/UserManagement";
 import Section from "./pages/Section";
@@ -12,7 +13,8 @@ import Section from "./pages/Section";
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={Home} />
+      <Route path={"/"} component={Home} />
+      <Route path={"/assets/new"} component={AssetCreate} />
       <Route path="/library" component={Home} />
       <Route path="/asset/:id" component={AssetDetail} />
       <Route path="/admin/users" component={UserManagement} />

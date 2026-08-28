@@ -8,11 +8,11 @@
 - [ ] Build the executive dashboard with database-driven library metrics, review queue, and recent activity.
 - [x] Build the asset library with grid/list views, advanced filters, sort controls, and global command-palette search.
 - [x] Build asset detail pages with metadata, owner, lifecycle, versions, files, related assets, activity, and audit context.
-- [ ] Build secure asset submission with storage references only, metadata capture, tags, and file validation.
+- [x] Build secure asset submission with storage references only, metadata capture, tags, and file validation.
 - [x] Implement mandatory Manager approval before a Team Member asset or attachment becomes published.
 - [x] Implement asset lifecycle actions for draft, submitted, changes requested, approved, published, archived, and rejected states.
 - [x] Implement sharing controls for an owner to share an approved asset with the home team or another team.
-- [ ] Build management views for team work, pending approvals, user roles, and access governance.
+- [x] Build management views for team work, pending approvals, user roles, and access governance.
 - [x] Build notifications for review submission, approval, rejection, and requested changes.
 - [x] Build an immutable audit trail for high-risk asset, sharing, approval, and role events.
 - [x] Seed only clearly labeled development data from the database; never use fabricated customer reviews or testimonials.
@@ -72,7 +72,11 @@
 - [ ] Add explicit secured-auth tests for administration listUsers, listTeams, setActive, assignTeam, and changeRole authorization.
 - [ ] Add secured-auth procedure tests for same-team and cross-team review and sharing allow/deny behavior.
 - [x] Add route/access tests proving Top Manager, Manager, and Team Member visibility under internal authentication.
-- [ ] Isolate hardcoded review and activity examples behind explicit demo mode so authenticated live mode never presents fabricated operational history.
+- [x] Isolate hardcoded review and activity examples behind explicit demo mode so authenticated live mode never presents fabricated operational history.
 - [ ] Add a documented PostgreSQL seed script for clearly labeled development records without customer reviews or testimonials.
 - [ ] Add route/page-level tests for `/asset/:id` loading, missing asset, and successful presentation states.
 - [ ] Verify the audit trigger using a disposable local PostgreSQL database when available, otherwise retain a clearly marked pending operator verification step.
+- [x] Add tag selection and persistence to the governed asset submission flow.
+- [x] Route the main Create asset button and quick-create options to `/assets/new` instead of closing a placeholder modal.
+- [ ] Add real pending-approval and team-work management views backed by PostgreSQL procedures.
+- [ ] Add tests for asset submission tags and manager approval/team-work management views.
