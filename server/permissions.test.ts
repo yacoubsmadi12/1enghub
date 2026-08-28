@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { managerCanReview, roleCan } from "../shared/permissions";
+import { hasTeamScope, managerCanReview, roleCan } from "../shared/permissions";
 
 describe("ENGHUB role permissions", () => {
   it("allows team members to create and submit review requests", () => {
@@ -12,6 +12,11 @@ describe("ENGHUB role permissions", () => {
     expect(managerCanReview("manager", true)).toBe(true);
     expect(managerCanReview("manager", false)).toBe(false);
     expect(managerCanReview("top_manager", false)).toBe(true);
+  });
+
+  it("checks every team membership for multi-team managers", () => {
+    expect(hasTeamScope(["team-ran", "team-core"], "team-core")).toBe(true);
+    expect(hasTeamScope(["team-ran", "team-core"], "team-transport")).toBe(false);
   });
 
   it("keeps administrative settings unavailable to managers", () => {

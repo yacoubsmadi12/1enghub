@@ -52,3 +52,7 @@ export function roleCan(role: UserRole, permission: EnghubPermission) {
 export function managerCanReview(role: UserRole, isSameTeam: boolean) {
   return role === "top_manager" || (role === "manager" && isSameTeam);
 }
+
+export function hasTeamScope(teamIds: readonly string[], targetTeamId: string) {
+  return teamIds.some(teamId => teamId === targetTeamId);
+}
