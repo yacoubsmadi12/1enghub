@@ -1,5 +1,5 @@
 # ENGHUB visual verification
 
-The dashboard was checked at a desktop viewport and at a 375×812 mobile viewport. The desktop view presents the persistent navigation, top command search, metric cards, asset library, governance queue, activity trail, and value signal without visible overflow. The mobile view collapses the sidebar behind the menu control, keeps the primary header actions reachable, changes metrics to a two-column layout, and keeps the asset search and filters visible within the first viewport.
+The latest desktop preview remains stable after the dashboard metric query, command palette, notification center, and advanced library filters were added. At 1280×720 the dark enterprise shell maintains clear hierarchy: persistent workspace navigation, command search, governance banner, four metric cards, curated library, and review rail. Demo fallback values remain visible when no authenticated PostgreSQL session exists.
 
-The current metrics and assets are intentionally marked as demo workspace content until PostgreSQL is connected. No customer reviews, ratings, or testimonials are included.
+The earlier mobile check at 375×812 confirmed sidebar collapse, two-column metrics, and a usable first-viewport library search. The current test suite and production build pass after the latest changes.

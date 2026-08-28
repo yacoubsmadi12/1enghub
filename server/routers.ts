@@ -1,5 +1,5 @@
 import { COOKIE_NAME } from "@shared/const";
-import { and, desc, eq, ilike, inArray, or } from "drizzle-orm";
+import { and, count, desc, eq, ilike, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { approvals, assetFiles, assetShares, assets, auditEvents, notifications, teamMemberships, users } from "../drizzle/schema";
 import { decisionToAssetStatus, canSubmitForReview } from "./workflow";
@@ -16,6 +16,18 @@ export const appRouter = router({
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
       return { success: true } as const;
+    }),
+  }),
+  dashboard: router({
+    snapshot: protectedProcedure.query(async () => {
+      const db = await getDb();
+      if (!db) return null;
+      const [total, active, pending] = await Promise.all([
+        db.select({ value: count() }).from(assets),
+        db.select({ value: count() }).from(assets).where(or(eq(assets.status, "active"), eq(assets.status, "published"))),
+        db.select({ value: count() }).from(assets).where(eq(assets.status, "pending_review")),
+      ]);
+      return { totalAssets: Number(total[0]?.value ?? 0), activeAssets: Number(active[0]?.value ?? 0), pendingApprovals: Number(pending[0]?.value ?? 0) };
     }),
   }),
   notifications: router({
@@ -111,6 +123,15 @@ export const appRouter = router({
         return share;
       });
       return { success: true, shareId: result?.id };
+    }),
+    registerFile: teamMemberProcedure.input(z.object({ assetId: z.string().uuid(), fileKey: z.string().min(1).max(512), fileUrl: z.string().url(), fileName: z.string().min(1).max(255), contentType: z.string().min(1).max(120), sizeBytes: z.number().int().positive().max(524288000), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/).optional() })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const asset = (await db.select().from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
+      if (!asset || (asset.ownerId !== ctx.user.id && ctx.user.role !== "top_manager")) throw new Error("Only the asset owner can register this file");
+      const file = (await db.insert(assetFiles).values({ assetId: asset.id, storageKey: input.fileKey, storageUrl: input.fileUrl, fileName: input.fileName, contentType: input.contentType, extension: input.fileName.includes(".") ? input.fileName.split(".").pop()!.toLowerCase() : "bin", sizeBytes: input.sizeBytes, checksumSha256: input.checksumSha256, uploadedById: ctx.user.id, reviewStatus: "draft" }).returning())[0];
+      await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "file_uploaded", entityType: "asset_file", entityId: file?.id, assetId: asset.id, metadata: { bytesPersistedInDatabase: false, contentType: input.contentType } });
+      return { success: true, fileId: file?.id, reviewStatus: "draft" as const };
     }),
     submitFileForReview: teamMemberProcedure.input(z.object({ assetId: z.string().uuid(), fileId: z.string().uuid() })).mutation(async ({ input, ctx }) => {
       const db = await getDb();

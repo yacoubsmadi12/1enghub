@@ -32,13 +32,17 @@
 - [x] Make manager authorization middleware validate all PostgreSQL team memberships, not only the role.
 - [x] Apply role/team-scoped procedures to submission, review, and sharing mutations.
 - [ ] Add router-level Vitest coverage for same-team and cross-team review and sharing decisions.
-- [ ] Add a real asset sharing mutation protected by role and team scope.
-- [ ] Apply a dedicated manager-scoped procedure to review decisions.
+- [x] Add a real asset sharing mutation protected by role and team scope.
+- [x] Apply a dedicated manager-scoped procedure to review decisions.
 - [ ] Add procedure-level tests for allowed and denied same-team and cross-team review/share actions.
-- [ ] Implement a real command-palette search dialog with keyboard shortcut, results, and wired advanced filters/sorting.
-- [ ] Add publish and archive lifecycle mutations with approval gating.
-- [ ] Implement attachment review and publication gating for asset_files.
+- [x] Implement a real command-palette search dialog with keyboard shortcut, results, and wired advanced filters/sorting.
+- [x] Add publish and archive lifecycle mutations with approval gating.
+- [x] Implement attachment review and publication gating for asset_files.
 - [ ] Add sharing UI and procedure-level tests for same-team and cross-team actions.
-- [ ] Add notification list/read APIs and a notification center UI.
-- [ ] Add role-change procedures with audit logging and protect audit history from modification/deletion.
+- [x] Add notification list/read APIs and a notification center UI.
+- [x] Add role-change procedures with audit logging and protect audit history from modification/deletion.
 - [ ] Wire dashboard and library content to tRPC PostgreSQL queries with safe demo fallback.
+- [x] Wire lifecycle, team, and classification filters into the asset filtering logic used by the library and command palette.
+- [x] Connect the notification center UI to the PostgreSQL notification list and read procedures with loading, empty, and error states.
+- [ ] Add explicit backend protections and tests proving audit entries cannot be modified or removed.
+- [ ] Add tests for allowed and denied role changes and notification list/read behavior.
