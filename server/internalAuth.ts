@@ -17,9 +17,10 @@ export const INTERNAL_ACCOUNT_SEEDS: readonly InternalAccountSeed[] = Object.ent
   role: account.role,
 }));
 
-export function normalizeInternalUsername(username: string): InternalUsername | null {
+export function normalizeInternalUsername(username: string): string | null {
   const normalized = username.trim().toLowerCase();
-  return normalized in INTERNAL_ACCOUNTS ? normalized as InternalUsername : null;
+  if (!/^[a-z0-9][a-z0-9._-]{2,63}$/.test(normalized)) return null;
+  return normalized;
 }
 
 export function hashPassword(password: string, salt = randomBytes(16).toString("hex")) {

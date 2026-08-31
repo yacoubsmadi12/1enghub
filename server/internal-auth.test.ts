@@ -9,9 +9,11 @@ describe("ENGHUB internal authentication", () => {
     expect(getInternalAccount("team-member")?.role).toBe("team_member");
   });
 
-  it("normalizes only the supported internal usernames", () => {
+  it("normalizes provisioned and administrator-created usernames safely", () => {
     expect(normalizeInternalUsername("  MANAGER ")).toBe("manager");
-    expect(normalizeInternalUsername("unknown-user")).toBeNull();
+    expect(normalizeInternalUsername("engineer.smith")).toBe("engineer.smith");
+    expect(normalizeInternalUsername("bad username")).toBeNull();
+    expect(normalizeInternalUsername("!!invalid!!")).toBeNull();
   });
 
   it("verifies a salted password hash and rejects wrong passwords", () => {

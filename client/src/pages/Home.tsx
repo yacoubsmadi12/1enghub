@@ -62,7 +62,7 @@ const navItems = [
   { label: "Asset library", icon: FolderKanban, path: "/library" },
   { label: "My assets", icon: GitBranch, path: "/workspace/my_assets" },
   { label: "Shared with me", icon: Users2, path: "/workspace/shared_with_me" },
-  { label: "Teams", icon: Users2, path: "/admin/users" },
+  { label: "User Management", icon: Users2, path: "/admin/users" },
   { label: "Knowledge hub", icon: Sparkles, path: "/workspace/knowledge_hub" },
 ];
 const governanceItems = [
@@ -142,7 +142,7 @@ export default function Home() {
   const [currentLocation, navigate] = useLocation();
   const displayName = user?.name || "Yacoub Smadi";
   const roleLabel = user?.role === "top_manager" ? "Top Manager" : user?.role === "manager" ? "Manager" : "Team Member";
-  const visibleNavItems = user?.role === "team_member" ? navItems.filter(item => ["Overview", "Asset library", "My assets", "Shared with me", "Knowledge hub"].includes(item.label)) : navItems;
+  const visibleNavItems = user?.role === "team_member" ? navItems.filter(item => ["Overview", "Asset library", "My assets", "Shared with me", "Knowledge hub"].includes(item.label)) : user?.role === "manager" ? navItems.filter(item => item.path !== "/admin/users") : navItems;
   const visibleGovernanceItems = user?.role === "team_member" ? governanceItems.filter(item => item.label === "Requests") : user?.role === "manager" ? governanceItems.filter(item => !["Audit", "Settings"].includes(item.label)) : governanceItems;
   const liveNotifications = trpc.notifications.list.useQuery(undefined, { enabled: Boolean(user), retry: false });
   const liveDashboard = trpc.dashboard.snapshot.useQuery(undefined, { enabled: Boolean(user), retry: false });

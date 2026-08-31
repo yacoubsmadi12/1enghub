@@ -5,7 +5,7 @@ import { z } from "zod";
 import { approvals, assetFiles, assetRelations, assetShares, assetVersions, assets, assetTags, auditEvents, notifications, tags, teamMemberships, teams, users } from "../drizzle/schema";
 import { decisionToAssetStatus, canSubmitForReview } from "./workflow";
 import { sdk } from "./_core/sdk";
-import { normalizeInternalUsername, verifyPassword } from "./internalAuth";
+import { hashPassword, normalizeInternalUsername, verifyPassword } from "./internalAuth";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { getDb } from "./db";
 import { storagePut } from "./storage";
@@ -92,7 +92,39 @@ export const appRouter = router({
     listUsers: adminProcedure.query(async () => {
       const db = await getDb();
       if (!db) return [];
-      return db.select({ id: users.id, name: users.name, email: users.email, role: users.role, isActive: users.isActive, lastSignedIn: users.lastSignedIn }).from(users).orderBy(users.name);
+      return db.select({ id: users.id, username: users.username, name: users.name, email: users.email, role: users.role, isActive: users.isActive, lastSignedIn: users.lastSignedIn }).from(users).orderBy(users.name);
+    }),
+    createUser: adminProcedure.input(z.object({ username: z.string().trim().min(3).max(64), name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(320).optional().or(z.literal("")), role: z.enum(["top_manager", "manager", "team_member"]), temporaryPassword: z.string().min(8).max(128), teamId: z.string().uuid().optional(), isActive: z.boolean().default(true) })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const username = normalizeInternalUsername(input.username);
+      if (!username) throw new Error("Username may contain only letters, numbers, dots, underscores, and hyphens");
+      const password = hashPassword(input.temporaryPassword);
+      const openId = `internal:${username}`;
+      const existing = await db.select({ id: users.id }).from(users).where(or(eq(users.username, username), eq(users.openId, openId))).limit(1);
+      if (existing.length) throw new Error("Username already exists");
+      const created = await db.transaction(async tx => {
+        const rows = await tx.insert(users).values({ openId, username, name: input.name, email: input.email || null, loginMethod: "internal_username", role: input.role, isActive: input.isActive, passwordSalt: password.salt, passwordHash: password.hash }).returning({ id: users.id });
+        if (input.teamId && rows[0]) await tx.insert(teamMemberships).values({ userId: rows[0].id, teamId: input.teamId, isPrimary: true });
+        if (rows[0]) await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: rows[0].id, metadata: { event: "USER_CREATED", username, role: input.role, teamId: input.teamId ?? null } });
+        return rows[0];
+      });
+      return { success: true, userId: created.id };
+    }),
+    updateUser: adminProcedure.input(z.object({ userId: z.string().uuid(), name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(320).optional().or(z.literal("")), role: z.enum(["top_manager", "manager", "team_member"]), isActive: z.boolean() })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      await db.update(users).set({ name: input.name, email: input.email || null, role: input.role, isActive: input.isActive, updatedAt: new Date() }).where(eq(users.id, input.userId));
+      await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: input.userId, metadata: { event: "USER_UPDATED", role: input.role, isActive: input.isActive } });
+      return { success: true };
+    }),
+    resetPassword: adminProcedure.input(z.object({ userId: z.string().uuid(), temporaryPassword: z.string().min(8).max(128) })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const password = hashPassword(input.temporaryPassword);
+      await db.update(users).set({ passwordSalt: password.salt, passwordHash: password.hash, updatedAt: new Date() }).where(eq(users.id, input.userId));
+      await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: input.userId, metadata: { event: "PASSWORD_RESET" } });
+      return { success: true };
     }),
     listTeams: adminProcedure.query(async () => {
       const db = await getDb();
