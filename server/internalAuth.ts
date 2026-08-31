@@ -1,30 +1,37 @@
-import { createHash, timingSafeEqual } from "node:crypto";
-import { getInternalAccount, type InternalUsername } from "@shared/internal-auth";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { INTERNAL_ACCOUNTS, type InternalUsername } from "@shared/internal-auth";
 
-const developmentPasswords: Record<InternalUsername, string> = {
-  admin: "admin-dev-only",
-  manager: "manager-dev-only",
-  "team-member": "team-member-dev-only",
+export type InternalAccountSeed = {
+  username: InternalUsername;
+  openId: string;
+  id: string;
+  name: string;
+  role: "top_manager" | "manager" | "team_member";
 };
 
-function configuredHash(username: InternalUsername) {
-  const key = `ENGHUB_${username.toUpperCase().replace("-", "_")}_PASSWORD_HASH`;
-  return process.env[key] || "";
+export const INTERNAL_ACCOUNT_SEEDS: readonly InternalAccountSeed[] = Object.entries(INTERNAL_ACCOUNTS).map(([username, account]) => ({
+  username: username as InternalUsername,
+  openId: account.openId,
+  id: account.id,
+  name: account.name,
+  role: account.role,
+}));
+
+export function normalizeInternalUsername(username: string): InternalUsername | null {
+  const normalized = username.trim().toLowerCase();
+  return normalized in INTERNAL_ACCOUNTS ? normalized as InternalUsername : null;
 }
 
-export function verifyInternalCredentials(username: string, password: string) {
-  const account = getInternalAccount(username);
-  if (!account || password.length < 8) return null;
-  const normalized = username.trim().toLowerCase() as InternalUsername;
-  const encoded = configuredHash(normalized);
-  if (encoded) {
-    const [salt, expected] = encoded.split(":");
-    if (!salt || !expected) return null;
-    const actual = createHash("sha256").update(`${salt}:${password}`).digest("hex");
-    const expectedBuffer = Buffer.from(expected, "hex");
-    const actualBuffer = Buffer.from(actual, "hex");
-    return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer) ? account : null;
-  }
-  if (process.env.NODE_ENV !== "production" && password === developmentPasswords[normalized]) return account;
-  return null;
+export function hashPassword(password: string, salt = randomBytes(16).toString("hex")) {
+  return {
+    salt,
+    hash: createHash("sha256").update(`${salt}:${password}`).digest("hex"),
+  };
+}
+
+export function verifyPassword(password: string, salt: string, expectedHash: string) {
+  if (!salt || !expectedHash) return false;
+  const actual = Buffer.from(hashPassword(password, salt).hash, "hex");
+  const expected = Buffer.from(expectedHash, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }

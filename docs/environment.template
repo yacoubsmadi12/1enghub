@@ -1,4 +1,3 @@
-# ENGHUB server configuration template
 # Copy these keys into your local Ubuntu environment or a protected .env file.
 # Never commit the real values.
 ENGHUB_DATABASE_URL=postgresql://enghub_app:CHANGE_ME@127.0.0.1:5432/enghub?sslmode=disable
@@ -9,7 +8,8 @@ OAUTH_SERVER_URL=https://api.manus.im
 VITE_APP_ID=replace-with-your-app-id
 VITE_OAUTH_PORTAL_URL=https://login.manus.im
 
-# Internal ENGHUB login hashes. Required in production; do not use plaintext passwords.
-ENGHUB_ADMIN_PASSWORD_HASH=CHANGE_SALT:CHANGE_HASH
-ENGHUB_MANAGER_PASSWORD_HASH=CHANGE_SALT:CHANGE_HASH
-ENGHUB_TEAM_MEMBER_PASSWORD_HASH=CHANGE_SALT:CHANGE_HASH
+# Provisioning-only secrets. `pnpm db:seed` hashes these into PostgreSQL;
+# do not keep plaintext values in Git or expose them to frontend code.
+ENGHUB_ADMIN_PASSWORD=replace-with-a-long-admin-password
+ENGHUB_MANAGER_PASSWORD=replace-with-a-long-manager-password
+ENGHUB_TEAM_MEMBER_PASSWORD=replace-with-a-long-team-member-password

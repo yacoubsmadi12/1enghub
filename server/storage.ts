@@ -2,18 +2,16 @@
 // Uploads via Forge Server presigned URL to S3 (PUT direct).
 // Downloads return /manus-storage/{key} paths served via 307 redirect.
 
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { ENV } from "./_core/env";
+
+export const LOCAL_STORAGE_ROOT = path.resolve(process.cwd(), ".data", "storage");
 
 function getForgeConfig() {
   const forgeUrl = ENV.forgeApiUrl;
   const forgeKey = ENV.forgeApiKey;
-
-  if (!forgeUrl || !forgeKey) {
-    throw new Error(
-      "Storage config missing: set BUILT_IN_FORGE_API_URL and BUILT_IN_FORGE_API_KEY",
-    );
-  }
-
+  if (!forgeUrl || !forgeKey) return null;
   return { forgeUrl: forgeUrl.replace(/\/+$/, ""), forgeKey };
 }
 
@@ -33,8 +31,19 @@ export async function storagePut(
   data: Buffer | Uint8Array | string,
   contentType = "application/octet-stream",
 ): Promise<{ key: string; url: string }> {
-  const { forgeUrl, forgeKey } = getForgeConfig();
+  const forgeConfig = getForgeConfig();
   const key = appendHashSuffix(normalizeKey(relKey));
+
+  // Development fallback: keep bytes on the local project volume when Forge/S3 is not configured.
+  if (!forgeConfig) {
+    const localPath = path.join(LOCAL_STORAGE_ROOT, key);
+    await mkdir(path.dirname(localPath), { recursive: true });
+    const fileBuffer = typeof data === "string" ? Buffer.from(data) : Buffer.from(data);
+    await writeFile(localPath, fileBuffer);
+    return { key, url: `/local-storage/${key}` };
+  }
+
+  const { forgeUrl, forgeKey } = forgeConfig;
 
   // 1. Get presigned PUT URL from Forge
   const presignUrl = new URL("v1/storage/presign/put", forgeUrl + "/");
@@ -73,11 +82,13 @@ export async function storagePut(
 
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
-  return { key, url: `/manus-storage/${key}` };
+  return { key, url: getForgeConfig() ? `/manus-storage/${key}` : `/local-storage/${key}` };
 }
 
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
-  const { forgeUrl, forgeKey } = getForgeConfig();
+  const forgeConfig = getForgeConfig();
+  if (!forgeConfig) return `/local-storage/${normalizeKey(relKey)}`;
+  const { forgeUrl, forgeKey } = forgeConfig;
   const key = normalizeKey(relKey);
 
   const getUrl = new URL("v1/storage/presign/get", forgeUrl + "/");

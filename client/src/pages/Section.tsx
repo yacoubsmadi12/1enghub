@@ -7,6 +7,11 @@ import { trpc } from "@/lib/trpc";
 
 const labels: Record<string, string> = { my_assets: "My assets", shared_with_me: "Shared with me", teams: "Teams", knowledge_hub: "Knowledge hub", requests: "Requests", approvals: "Approvals", analytics: "Analytics", audit: "Audit", settings: "Settings" };
 const roleLabel = (role?: string) => role === "top_manager" ? "Top Manager" : role === "manager" ? "Manager" : "Team Member";
+const roleSections: Record<string, readonly string[]> = {
+  top_manager: ["my_assets", "shared_with_me", "teams", "knowledge_hub", "requests", "approvals", "analytics", "audit", "settings"],
+  manager: ["my_assets", "shared_with_me", "teams", "knowledge_hub", "requests", "approvals", "analytics"],
+  team_member: ["my_assets", "shared_with_me", "knowledge_hub", "requests"],
+};
 
 export default function Section() {
   const { section = "workspace" } = useParams<{ section: string }>();
@@ -17,6 +22,8 @@ export default function Section() {
   const decide = trpc.assets.decide.useMutation({ onSuccess: () => queueQuery.refetch() });
   if (loading) return <div className="min-h-screen bg-[#080f19] p-8 text-slate-400">Loading access policy...</div>;
   if (!user) return <div className="login-screen"><div className="login-card text-center"><LockKeyhole className="mx-auto text-cyan-300" /><h1 className="mt-4 text-xl font-semibold text-white">Internal access required</h1><Link href="/" className="mt-5 inline-block text-sm text-cyan-300">Return to sign in</Link></div></div>;
+  const allowedSections = roleSections[user.role] ?? [];
+  if (!allowedSections.includes(section)) return <div className="min-h-screen bg-[#080f19] p-8 text-slate-200"><Link href="/" className="text-cyan-300">Return to ENGHUB</Link><div className="mx-auto mt-16 max-w-xl rounded-2xl border border-rose-400/20 bg-rose-400/[0.04] p-8"><h1 className="text-xl font-semibold text-white">Access restricted</h1><p className="mt-3 text-sm leading-6 text-slate-400">This workspace section is not available for the {roleLabel(user.role)} role.</p></div></div>;
   const title = labels[section] || "Workspace section";
   const allAssets = assetsQuery.data ?? [];
   const showManagement = ["approvals", "requests", "teams", "analytics", "audit", "settings"].includes(section);

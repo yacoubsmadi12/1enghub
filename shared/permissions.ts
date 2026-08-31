@@ -4,6 +4,7 @@ export const ENGHUB_ROLES = ["top_manager", "manager", "team_member"] as const;
 
 export type EnghubPermission =
   | "view_all_assets"
+  | "view_team_assets"
   | "manage_users"
   | "manage_teams"
   | "manage_settings"
@@ -32,8 +33,7 @@ export const rolePermissions: Record<UserRole, readonly EnghubPermission[]> = {
     "request_review",
   ],
   manager: [
-    "view_all_assets",
-    "view_audit",
+    "view_team_assets",
     "approve_assets",
     "manage_team",
     "share_team_assets",

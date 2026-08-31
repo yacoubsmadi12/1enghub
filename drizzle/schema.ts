@@ -91,6 +91,9 @@ export const teams = pgTable("teams", {
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   openId: varchar("open_id", { length: 128 }).notNull().unique(),
+  username: varchar("username", { length: 64 }).unique(),
+  passwordSalt: varchar("password_salt", { length: 64 }),
+  passwordHash: varchar("password_hash", { length: 128 }),
   name: varchar("name", { length: 160 }),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("login_method", { length: 64 }),
@@ -160,6 +163,8 @@ export const assetFiles = pgTable("asset_files", {
   versionId: uuid("version_id").references(() => assetVersions.id, { onDelete: "set null" }),
   uploadedById: uuid("uploaded_by_id").notNull().references(() => users.id, { onDelete: "restrict" }),
   fileName: varchar("file_name", { length: 255 }).notNull(),
+  relativePath: varchar("relative_path", { length: 512 }),
+  fileRole: varchar("file_role", { length: 24 }).default("project_file").notNull(),
   storageKey: varchar("storage_key", { length: 512 }).notNull().unique(),
   storageUrl: varchar("storage_url", { length: 1024 }).notNull(),
   contentType: varchar("content_type", { length: 160 }).notNull(),

@@ -7,6 +7,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { LOCAL_STORAGE_ROOT } from "../storage";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -34,6 +35,8 @@ async function startServer() {
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
+  // Local development fallback for project bytes when Forge/S3 credentials are not configured.
+  app.use("/local-storage", express.static(LOCAL_STORAGE_ROOT, { fallthrough: false, index: false }));
   // tRPC API
   app.use(
     "/api/trpc",

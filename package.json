@@ -10,7 +10,8 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
-    "db:push": "drizzle-kit generate && drizzle-kit migrate"
+    "db:push": "drizzle-kit generate && drizzle-kit migrate",
+    "db:seed": "tsx scripts/seed-internal-accounts.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.693.0",
@@ -63,6 +64,7 @@
     "mysql2": "^3.15.0",
     "nanoid": "^5.1.5",
     "next-themes": "^0.4.6",
+    "node-unrar-js": "^2.0.2",
     "pg": "^8.23.0",
     "react": "^19.2.1",
     "react-day-picker": "^9.11.1",
@@ -75,6 +77,7 @@
     "superjson": "^1.13.3",
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
+    "unzipper": "^0.12.5",
     "vaul": "^1.1.2",
     "wouter": "^3.3.5",
     "zod": "^4.1.12"
@@ -89,6 +92,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
+    "@types/unzipper": "^0.10.11",
     "@vitejs/plugin-react": "^5.0.4",
     "add": "^2.0.6",
     "autoprefixer": "^10.4.20",

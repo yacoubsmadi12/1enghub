@@ -1,9 +1,17 @@
 # ENGHUB visual verification
 
-The latest desktop preview remains stable after the dashboard metric query, command palette, notification center, and advanced library filters were added. At 1280×720 the dark enterprise shell maintains clear hierarchy: persistent workspace navigation, command search, governance banner, four metric cards, curated library, and review rail. Demo fallback values remain visible when no authenticated PostgreSQL session exists.
+The desktop workspace keeps the dark enterprise shell with persistent role-aware navigation, live PostgreSQL metrics, governed asset library, and scoped governance actions. Authenticated views do not fall back to sample assets, metrics, or activity; an empty database renders explicit empty and connection states instead.
 
-The earlier mobile check at 375×812 confirmed sidebar collapse, two-column metrics, and a usable first-viewport library search. The current test suite and production build pass after the latest changes.
+The mobile layout keeps the collapsible sidebar, responsive metrics, and usable library search. The login screen uses a lightweight animated telecom scene with tower silhouettes, signal arcs, network pulses, and a glass access card, so it does not depend on an external video asset.
 
 ## Internal login verification
 
-The unauthenticated root route now renders the ENGHUB internal-access screen with a username selector for `admin`, `manager`, and `team-member`, a password field, explicit no-Gmail guidance, and a demo-preview option. The screen is centered, readable, keyboard-compatible through native controls, and visually consistent with the dark enterprise theme.
+The root route renders a username text field and password field. There is no username dropdown and no demo-preview bypass. The three provisioned accounts are `admin` (`top_manager`), `manager` (`manager`), and `team-member` (`team_member`); credentials are verified against salted hashes stored in PostgreSQL.
+
+## Role verification
+
+| Role | Expected workspace access | Expected controls |
+|---|---|---|
+| Top Manager | All assets and all teams | User management, role/team assignment, activation, approvals, audit, settings, sharing, publishing |
+| Manager | Assigned team assets and team-scoped workspace | Review queue, approve/request changes/reject, publish approved assets, share governed team assets, create and submit within assigned team |
+| Team Member | Own assets and assigned-team assets | Create/upload, edit own drafts, submit for review, view scoped library; no approvals, user management, audit, or settings |

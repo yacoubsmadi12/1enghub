@@ -288,14 +288,16 @@ class SDKServer {
 
     const internalAccount = session.openId.startsWith("internal:") ? getInternalAccount(session.openId.slice("internal:".length)) : null;
     if (internalAccount) {
-      const now = new Date();
-      if (process.env.ENGHUB_DATABASE_URL) {
-        try {
-          const stored = await db.getUserByOpenId(internalAccount.openId);
-          if (stored) return stored;
-        } catch (error) { console.warn("[Auth] Internal account lookup deferred:", error); }
+      if (!process.env.ENGHUB_DATABASE_URL) throw ForbiddenError("Database unavailable");
+      try {
+        const stored = await db.getUserByOpenId(internalAccount.openId);
+        if (!stored || !stored.isActive) throw ForbiddenError("Internal account is inactive or not provisioned");
+        return stored;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("inactive or not provisioned")) throw error;
+        console.warn("[Auth] Internal account lookup failed:", error);
+        throw ForbiddenError("Unable to load internal account");
       }
-      return { id: internalAccount.id, openId: internalAccount.openId, name: internalAccount.name, email: null, loginMethod: "internal_username", role: internalAccount.role, isActive: true, createdAt: now, updatedAt: now, lastSignedIn: now };
     }
 
     const sessionUserId = session.openId;
@@ -348,6 +350,9 @@ function buildCronUser(
   return {
     id: "00000000-0000-0000-0000-000000000001",
     openId: userInfo.openId,
+    username: null,
+    passwordSalt: null,
+    passwordHash: null,
     name: userInfo.name || "Manus Scheduled Task",
     email: null,
     loginMethod: null,

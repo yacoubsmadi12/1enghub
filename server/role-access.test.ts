@@ -14,7 +14,7 @@ describe("ENGHUB role visibility", () => {
     expect(roleCan("manager", "manage_users")).toBe(false);
     expect(roleCan("team_member", "manage_users")).toBe(false);
     expect(roleCan("top_manager", "view_audit")).toBe(true);
-    expect(roleCan("manager", "view_audit")).toBe(true);
+    expect(roleCan("manager", "view_audit")).toBe(false);
     expect(roleCan("team_member", "view_audit")).toBe(false);
   });
 });

@@ -8,6 +8,20 @@
       "when": 1787919245540,
       "tag": "0000_workable_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787926151933,
+      "tag": "0001_internal_account_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788068437960,
+      "tag": "0002_lively_kang",
+      "breakpoints": true
     }
   ]
 }

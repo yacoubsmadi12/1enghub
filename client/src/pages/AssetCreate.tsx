@@ -1,25 +1,172 @@
-import { useState } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, CheckCircle2, FileUp, ShieldCheck } from "lucide-react";
+import { Archive, ArrowLeft, CheckCircle2, Database, FileCode2, FileUp, GitBranch, Info, LockKeyhole, ShieldCheck, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { trpc } from "@/lib/trpc";
 
+type UploadedFile = {
+  fileKey: string;
+  fileUrl: string;
+  fileName: string;
+  relativePath?: string;
+  fileRole: "archive" | "project_file";
+  contentType: string;
+  sizeBytes: number;
+  checksumSha256: string;
+};
+
+type UploadedProject = {
+  file: UploadedFile;
+  project: {
+    format: "zip" | "rar" | "file";
+    isArchive: boolean;
+    archiveName: string;
+    fileCount: number;
+    totalBytes: number;
+    files: Array<UploadedFile & { relativePath: string; fileRole: "project_file" }>;
+  };
+};
+
+const MAX_PROJECT_SIZE = 25 * 1024 * 1024;
+const projectTypes = [
+  { value: "source_code", label: "Source code", hint: "Repository, application, or service" },
+  { value: "tool", label: "Engineering tool", hint: "Utility used by the engineering team" },
+  { value: "script", label: "Script", hint: "Python, shell, PowerShell, or similar" },
+  { value: "automation", label: "Automation", hint: "Workflow, job, or repeatable process" },
+  { value: "documentation", label: "Documentation", hint: "README, guide, or technical reference" },
+  { value: "config_template", label: "Configuration", hint: "Template or deployment configuration" },
+];
+const classifications = [
+  { value: "internal", label: "Internal", hint: "Available to approved ENGHUB members" },
+  { value: "confidential", label: "Confidential", hint: "Restricted to the selected team" },
+  { value: "restricted", label: "Restricted", hint: "Requires explicit governed access" },
+];
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function projectNameFromFile(fileName: string) {
+  return fileName
+    .replace(/\.(tar\.gz|tgz|zip|tar|7z|rar)$/i, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\b\w/g, character => character.toUpperCase())
+    .trim();
+}
+
+function bytesToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...Array.from(bytes.subarray(index, Math.min(index + chunkSize, bytes.length))));
+  }
+  return btoa(binary);
+}
+
+async function sha256(buffer: ArrayBuffer) {
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export default function AssetCreate() {
   const { user, loading, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
+  const teams = trpc.teams.available.useQuery(undefined, { staleTime: 30_000 });
+  const upload = trpc.assets.upload.useMutation();
   const submit = trpc.assets.submit.useMutation({ onSuccess: result => navigate(`/asset/${result.assetId}`) });
-  const [form, setForm] = useState({ name: "", summary: "", type: "tool", classification: "internal", homeTeamId: "", technology: "", version: "0.1.0", tags: "", fileKey: "", fileUrl: "", fileName: "", contentType: "", sizeBytes: "" });
+  const [form, setForm] = useState({ name: "", summary: "", type: "source_code", classification: "internal", homeTeamId: "", technology: "", version: "0.1.0", tags: "" });
+  const [projectFile, setProjectFile] = useState<File | null>(null);
+  const [uploadedProject, setUploadedProject] = useState<UploadedProject | null>(null);
+  const [uploadError, setUploadError] = useState("");
+  const [isPreparing, setIsPreparing] = useState(false);
   const update = (key: string, value: string) => setForm(current => ({ ...current, [key]: value }));
+
+  useEffect(() => {
+    if (!form.homeTeamId && teams.data?.[0]?.id) update("homeTeamId", teams.data[0].id);
+  }, [form.homeTeamId, teams.data]);
 
   if (loading) return <div className="login-screen"><div className="login-card text-center"><p className="text-sm text-slate-400">Loading secure workspace...</p></div></div>;
   if (!isAuthenticated) return <div className="login-screen"><div className="login-card text-center"><ShieldCheck className="mx-auto text-cyan-300" /><h1 className="mt-4 text-xl font-semibold text-white">Internal access required</h1><Link href="/" className="mt-5 inline-block text-sm text-cyan-300">Return to sign in</Link></div></div>;
 
-  const handleSubmit = (event: React.FormEvent) => {
-    event.preventDefault();
-    submit.mutate({ name: form.name, summary: form.summary || undefined, type: form.type as never, classification: form.classification as never, homeTeamId: form.homeTeamId, technology: form.technology || undefined, version: form.version, tags: form.tags.split(",").map(tag => tag.trim()).filter(Boolean), file: form.fileKey && form.fileUrl ? { fileKey: form.fileKey, fileUrl: form.fileUrl, fileName: form.fileName, contentType: form.contentType, sizeBytes: Number(form.sizeBytes) } : undefined });
+  const handleProjectFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0];
+    if (!selected) return;
+    setProjectFile(selected);
+    setUploadedProject(null);
+    setUploadError("");
+    if (selected.size > MAX_PROJECT_SIZE) {
+      setProjectFile(null);
+      setUploadError("Projects are limited to 25 MB in this workspace. Compress the repository as .zip or .tar.gz and try again.");
+      return;
+    }
+    setIsPreparing(true);
+    try {
+      const buffer = await selected.arrayBuffer();
+      const checksumSha256 = await sha256(buffer);
+      const contentType = selected.type || (selected.name.toLowerCase().endsWith(".zip") ? "application/zip" : "application/octet-stream");
+      upload.mutate({ fileName: selected.name, contentType, sizeBytes: selected.size, checksumSha256, dataBase64: bytesToBase64(buffer) }, {
+        onSuccess: result => {
+          setUploadedProject(result);
+          if (!form.name) update("name", projectNameFromFile(selected.name));
+          if (!form.summary) update("summary", `Initial project upload: ${selected.name}`);
+        },
+        onError: error => setUploadError(error.message),
+        onSettled: () => setIsPreparing(false),
+      });
+    } catch {
+      setIsPreparing(false);
+      setUploadError("The project could not be prepared in the browser. Please try the archive again.");
+    }
   };
 
-  return <div className="min-h-screen bg-[#07111f] px-4 py-8 text-slate-200 sm:px-8"><div className="mx-auto max-w-4xl"><Link href="/" className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-cyan-300"><ArrowLeft size={15} /> Back to workspace</Link><div className="mt-8 flex items-start justify-between gap-6"><div><div className="eyebrow"><FileUp size={13} /> Governed submission</div><h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">Create engineering asset</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">Every Team Member submission starts in Pending review. PostgreSQL stores metadata and secure storage references only; file bytes stay outside the database.</p></div><div className="hidden rounded-2xl border border-cyan-400/15 bg-cyan-400/[0.06] p-4 text-right sm:block"><div className="text-[10px] uppercase tracking-[0.18em] text-cyan-200">Signed in as</div><div className="mt-2 text-sm font-semibold text-white">{user?.name}</div><div className="mt-1 text-xs text-slate-500">{user?.role}</div></div></div><form onSubmit={handleSubmit} className="mt-8 grid gap-6 lg:grid-cols-[1.35fr_.9fr]"><div className="panel-surface p-6"><h2 className="text-base font-semibold text-white">Asset information</h2><div className="mt-5 grid gap-4"><label className="field-label">Name<Input required value={form.name} onChange={e => update("name", e.target.value)} placeholder="e.g. RAN Configuration Validator" /></label><label className="field-label">Summary<textarea value={form.summary} onChange={e => update("summary", e.target.value)} placeholder="What does this asset help the team do?" /></label><div className="grid gap-4 sm:grid-cols-2"><label className="field-label">Type<select value={form.type} onChange={e => update("type", e.target.value)}><option value="tool">Tool</option><option value="script">Script</option><option value="automation">Automation</option><option value="documentation">Documentation</option><option value="runbook">Runbook</option><option value="sop">SOP</option><option value="knowledge">Knowledge</option></select></label><label className="field-label">Classification<select value={form.classification} onChange={e => update("classification", e.target.value)}><option value="internal">Internal</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option></select></label></div><div className="grid gap-4 sm:grid-cols-2"><label className="field-label">Team UUID<Input required value={form.homeTeamId} onChange={e => update("homeTeamId", e.target.value)} placeholder="PostgreSQL team UUID" /></label><label className="field-label">Technology<Input value={form.technology} onChange={e => update("technology", e.target.value)} placeholder="PostgreSQL, Python..." /></label></div><label className="field-label">Version<Input required value={form.version} onChange={e => update("version", e.target.value)} /></label><label className="field-label">Tags<Input value={form.tags} onChange={e => update("tags", e.target.value)} placeholder="ran, automation, troubleshooting" /><span className="mt-1 block text-[11px] font-normal text-slate-500">Separate tags with commas. Maximum 12 tags.</span></label></div></div><div className="panel-surface p-6"><h2 className="text-base font-semibold text-white">Secure file reference</h2><p className="mt-2 text-xs leading-5 text-slate-500">Upload the bytes to your approved object storage first, then register the resulting key and URL here.</p><div className="mt-5 grid gap-4"><label className="field-label">Storage key<Input value={form.fileKey} onChange={e => update("fileKey", e.target.value)} placeholder="enghub/assets/..." /></label><label className="field-label">Storage URL<Input type="url" value={form.fileUrl} onChange={e => update("fileUrl", e.target.value)} placeholder="https://..." /></label><label className="field-label">File name<Input value={form.fileName} onChange={e => update("fileName", e.target.value)} placeholder="validator.zip" /></label><div className="grid gap-4 sm:grid-cols-2"><label className="field-label">Content type<Input value={form.contentType} onChange={e => update("contentType", e.target.value)} placeholder="application/zip" /></label><label className="field-label">Size bytes<Input type="number" min="1" value={form.sizeBytes} onChange={e => update("sizeBytes", e.target.value)} placeholder="1024" /></label></div></div><div className="mt-6 flex items-start gap-2 text-xs leading-5 text-slate-500"><CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-300" /> The Manager must review the asset and its attachment before publication.</div><Button disabled={submit.isPending} className="create-button mt-6 w-full">{submit.isPending ? "Submitting..." : "Submit for Manager review"}</Button>{submit.error && <p className="mt-3 text-xs text-rose-300">{submit.error.message}</p>}</div></form></div></div>;
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!uploadedProject) {
+      setUploadError("Upload the project first. ENGHUB creates the asset only after the file is safely stored.");
+      return;
+    }
+    submit.mutate({
+      name: form.name,
+      summary: form.summary || undefined,
+      type: form.type as never,
+      classification: form.classification as never,
+      homeTeamId: form.homeTeamId,
+      technology: form.technology || undefined,
+      version: form.version,
+      tags: form.tags.split(",").map(tag => tag.trim()).filter(Boolean),
+      file: uploadedProject.file,
+      project: uploadedProject.project,
+    });
+  };
+
+  const selectedType = projectTypes.find(type => type.value === form.type) ?? projectTypes[0];
+  const selectedClassification = classifications.find(item => item.value === form.classification) ?? classifications[0];
+
+  return <div className="create-page min-h-screen bg-[#07111f] px-4 py-7 text-slate-200 sm:px-8">
+    <div className="mx-auto max-w-6xl">
+      <div className="create-topbar"><Link href="/" className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 transition hover:text-cyan-300"><ArrowLeft size={15} /> Back to workspace</Link><div className="create-breadcrumb"><GitBranch size={13} /> New governed project</div><div className="hidden items-center gap-2 text-[10px] text-slate-500 sm:flex"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> Signed in as {user?.name}</div></div>
+      <header className="create-hero"><div><div className="eyebrow"><UploadCloud size={13} /> Repository-style submission</div><h1 className="mt-3 text-4xl font-semibold tracking-tight text-white">Create engineering asset<span className="text-cyan-300">.</span></h1><p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">Upload your project once. ENGHUB stores the file in secure object storage, registers its metadata in PostgreSQL, and sends the first version to Manager review.</p></div><div className="create-status"><span className="create-status-dot" /><div><strong>Ready to commit</strong><span>Protected project intake</span></div></div></header>
+
+      <div className="create-process"><div><span>01</span><strong>Upload project</strong><p>Choose a .zip, .rar, .tar.gz, or project file.</p></div><div><span>02</span><strong>Describe repository</strong><p>Name, type, team, and visibility.</p></div><div><span>03</span><strong>Request review</strong><p>Manager reviews before publication.</p></div></div>
+
+      <form onSubmit={handleSubmit} className="create-grid">
+        <div className="create-main-column">
+          <section className="repo-card upload-card"><div className="section-title-row"><div><div className="section-kicker"><Archive size={13} /> Project files</div><h2>Upload your project</h2><p>Like a repository upload: package the project as ZIP or RAR and ENGHUB will unpack the files, keep bytes outside PostgreSQL, and register the manifest.</p></div><span className="size-limit">25 MB max</span></div><label className={`project-dropzone ${projectFile ? "project-dropzone-filled" : ""}`}><input type="file" accept=".zip,.tar,.gz,.tgz,.7z,.rar,.py,.js,.ts,.sh,.yaml,.yml,.md,.pdf" onChange={handleProjectFile} /><div className="upload-icon"><FileUp size={22} /></div><div className="upload-copy"><strong>{projectFile ? projectFile.name : "Choose a project file"}</strong><span>{projectFile ? `${formatBytes(projectFile.size)} · ${projectFile.type || "application/octet-stream"}` : "ZIP or RAR archive recommended · ENGHUB unpacks the project automatically"}</span></div><span className="upload-action">{isPreparing || upload.isPending ? "Uploading..." : projectFile ? "Replace" : "Browse files"}</span></label>{uploadError && <p className="form-error"><Info size={14} />{uploadError}</p>}{uploadedProject && <><div className="uploaded-proof"><div className="proof-icon"><CheckCircle2 size={17} /></div><div className="min-w-0 flex-1"><strong>{uploadedProject.project.isArchive ? `${uploadedProject.project.format.toUpperCase()} project unpacked` : "Project stored securely"}</strong><span>{uploadedProject.project.fileCount} file{uploadedProject.project.fileCount === 1 ? "" : "s"} · {formatBytes(uploadedProject.project.totalBytes)} unpacked · Archive {formatBytes(uploadedProject.file.sizeBytes)}</span></div><span className="proof-badge">Ready</span></div><div className="project-manifest"><div className="manifest-heading"><span>Project manifest</span><span>{uploadedProject.project.fileCount} files</span></div><div className="manifest-list">{uploadedProject.project.files.slice(0, 8).map(file => <div key={file.relativePath}><FileCode2 size={13} /><span>{file.relativePath}</span><small>{formatBytes(file.sizeBytes)}</small></div>)}{uploadedProject.project.fileCount > 8 && <p>+ {uploadedProject.project.fileCount - 8} more files stored with this version</p>}</div></div></>}</section>
+
+          <section className="repo-card"><div className="section-kicker"><FileCode2 size={13} /> Repository details</div><h2>Tell the workspace what this is</h2><p className="section-help">These details become the project card, version record, and review request. No UUIDs or storage URLs are needed.</p><div className="mt-6 grid gap-5"><label className="field-label">Project name<Input required minLength={3} value={form.name} onChange={event => update("name", event.target.value)} placeholder="e.g. RAN Configuration Validator" /></label><label className="field-label">What does it do?<textarea value={form.summary} onChange={event => update("summary", event.target.value)} placeholder="Describe the problem this project solves and who should use it." /></label><div className="grid gap-5 sm:grid-cols-2"><label className="field-label">Project type<span className="field-hint">{selectedType.hint}</span><select value={form.type} onChange={event => update("type", event.target.value)}>{projectTypes.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label><label className="field-label">Technology <span className="field-hint">Optional search signal</span><Input value={form.technology} onChange={event => update("technology", event.target.value)} placeholder="Python, Node.js, Terraform..." /></label></div><div className="grid gap-5 sm:grid-cols-2"><label className="field-label">Version <span className="field-hint">First commit</span><Input required value={form.version} onChange={event => update("version", event.target.value)} placeholder="0.1.0" /></label><label className="field-label">Tags <span className="field-hint">Comma-separated · max 12</span><Input value={form.tags} onChange={event => update("tags", event.target.value)} placeholder="ran, automation, troubleshooting" /></label></div></div></section>
+        </div>
+
+        <aside className="create-side-column"><section className="repo-card"><div className="section-kicker"><GitBranch size={13} /> Commit destination</div><h2>Where should it live?</h2><p className="section-help">Choose a team by name. The project will be visible to that team after review.</p><label className="field-label mt-6">Target team<span className="field-hint">{teams.isLoading ? "Loading your teams..." : "Only teams in your scope are shown"}</span><select required value={form.homeTeamId} onChange={event => update("homeTeamId", event.target.value)} disabled={teams.isLoading || !teams.data?.length}><option value="" disabled>Select a team</option>{teams.data?.map(team => <option key={team.id} value={team.id}>{team.name} · {team.code}</option>)}</select></label>{teams.data?.[0]?.description && <div className="team-preview"><span className="team-avatar">{teams.data[0].code.slice(0, 1)}</span><div><strong>{teams.data.find(team => team.id === form.homeTeamId)?.name ?? teams.data[0].name}</strong><span>{teams.data.find(team => team.id === form.homeTeamId)?.description ?? teams.data[0].description}</span></div></div>}<label className="field-label mt-5">Visibility<span className="field-hint">{selectedClassification.hint}</span><select value={form.classification} onChange={event => update("classification", event.target.value)}>{classifications.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label></section>
+
+          <section className="repo-card database-card"><div className="section-kicker"><Database size={13} /> What ENGHUB stores</div><h2>Clear data boundary</h2><div className="storage-list"><div><span className="storage-icon storage-icon-file"><Archive size={14} /></span><p><strong>Secure storage</strong><span>Original archive plus extracted project files, checksums, paths, sizes, and content types.</span></p></div><div><span className="storage-icon storage-icon-db"><Database size={14} /></span><p><strong>PostgreSQL</strong><span>Name, summary, team, classification, version, tags, owner, and file reference.</span></p></div><div><span className="storage-icon storage-icon-lock"><LockKeyhole size={14} /></span><p><strong>Governance</strong><span>Pending review status, reviewer approval, and an audit event.</span></p></div></div></section>
+
+          <section className="commit-card"><div className="commit-card-top"><div><div className="section-kicker"><ShieldCheck size={13} /> Ready for review</div><h2>{form.name || "Your project"}</h2></div><span className="pending-badge">Pending review</span></div><div className="commit-summary"><span>{uploadedProject ? `${uploadedProject.project.fileCount} files · ${uploadedProject.project.format.toUpperCase()}` : "No project uploaded yet"}</span><span>{form.version || "0.1.0"}</span></div><Button type="submit" disabled={submit.isPending || upload.isPending || isPreparing || !uploadedProject || !form.homeTeamId} className="create-button commit-button">{submit.isPending ? "Creating asset..." : "Commit project & request review"}<ArrowLeft size={15} className="rotate-180" /></Button><p className="commit-note"><CheckCircle2 size={13} /> Manager approval is required before this project is published.</p>{submit.error && <p className="form-error mt-3"><Info size={14} />{submit.error.message}</p>}</section></aside>
+      </form>
+    </div>
+  </div>;
 }

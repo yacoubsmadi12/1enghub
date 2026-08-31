@@ -64,13 +64,15 @@ chmod 600 .env
 
 ## 4. تطبيق مخطط PostgreSQL
 
-ملف Drizzle المصدر هو `drizzle/schema.ts`، والهجرة الجاهزة موجودة في `drizzle/0000_workable_gambit.sql`. طبّقها على قاعدة ENGHUB:
+ملف Drizzle المصدر هو `drizzle/schema.ts`. طبّق الهجرة الأساسية ثم هجرة بيانات اعتماد الدخول:
 
 ```bash
 set -a
 source .env
 set +a
 psql "$ENGHUB_DATABASE_URL" -f drizzle/0000_workable_gambit.sql
+psql "$ENGHUB_DATABASE_URL" -f drizzle/0001_internal_account_credentials.sql
+psql "$ENGHUB_DATABASE_URL" -f drizzle/0001_audit_immutability.sql
 ```
 
 للتحقق:
@@ -120,14 +122,16 @@ NODE_ENV=production pnpm start
 
 ## 9. الدخول الداخلي للحسابات
 
-الدخول من واجهة ENGHUB لا يستخدم Gmail. الحسابات الداخلية هي `admin` لدور Top Manager، و`manager` لدور Manager، و`team-member` لدور Team Member. في بيئة التطوير المحلية فقط توجد كلمات مرور تجريبية افتراضية: `admin-dev-only` و`manager-dev-only` و`team-member-dev-only`.
+الدخول من واجهة ENGHUB لا يستخدم Gmail أو قائمة منسدلة. الحسابات الداخلية تُنشأ في PostgreSQL بالأدوار التالية: `admin` لدور Top Manager، و`manager` لدور Manager، و`team-member` لدور Team Member. كلمة المرور لا تُحفظ كنص صريح؛ سكربت الزرع يولّد salt وSHA-256 hash لكل حساب.
 
-في الإنتاج، يجب تعريف قيم hash منفصلة وعدم استخدام كلمات المرور التجريبية. الصيغة المطلوبة لكل متغير هي `salt:sha256(salt:password)`:
+بعد تطبيق الهجرات، عرّف كلمات مرور provisioning في جلسة الخادم فقط ثم شغّل:
 
 ```bash
-export ENGHUB_ADMIN_PASSWORD_HASH='CHANGE_SALT:CHANGE_HASH'
-export ENGHUB_MANAGER_PASSWORD_HASH='CHANGE_SALT:CHANGE_HASH'
-export ENGHUB_TEAM_MEMBER_PASSWORD_HASH='CHANGE_SALT:CHANGE_HASH'
+export ENGHUB_ADMIN_PASSWORD='ضع-كلمة-مرور-قوية-هنا'
+export ENGHUB_MANAGER_PASSWORD='ضع-كلمة-مرور-قوية-هنا'
+export ENGHUB_TEAM_MEMBER_PASSWORD='ضع-كلمة-مرور-قوية-هنا'
+pnpm db:seed
+unset ENGHUB_ADMIN_PASSWORD ENGHUB_MANAGER_PASSWORD ENGHUB_TEAM_MEMBER_PASSWORD
 ```
 
-استخدم مولد hash موثوقاً على الخادم، واحفظ هذه القيم خارج Git وبصلاحيات مقيدة. إذا لم توجد hashes في بيئة `production` فسيرفض التطبيق تسجيل الدخول، ولن يستطيع أي زائر افتراض دور `admin` بمجرد كتابة اسم المستخدم.
+الأمر قابل لإعادة التشغيل ويعيد تفعيل الحسابات ويحدّث hash كلمة المرور وينشئ فريق `RAN Engineering` ويربط الحسابات الثلاثة به. إذا كان الحساب غير موجود أو غير نشط أو لا يملك hash صالحًا، يرفض الخادم تسجيل الدخول ولا يستطيع أي زائر افتراض دور `admin` بمجرد كتابة اسم المستخدم.
