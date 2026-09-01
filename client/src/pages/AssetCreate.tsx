@@ -69,7 +69,8 @@ function bytesToBase64(buffer: ArrayBuffer) {
 }
 
 async function sha256(buffer: ArrayBuffer) {
-  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  if (!globalThis.crypto?.subtle) return undefined;
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", buffer);
   return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
@@ -109,7 +110,7 @@ export default function AssetCreate() {
       const buffer = await selected.arrayBuffer();
       const checksumSha256 = await sha256(buffer);
       const contentType = selected.type || (selected.name.toLowerCase().endsWith(".zip") ? "application/zip" : "application/octet-stream");
-      upload.mutate({ fileName: selected.name, contentType, sizeBytes: selected.size, checksumSha256, dataBase64: bytesToBase64(buffer) }, {
+      upload.mutate({ fileName: selected.name, contentType, sizeBytes: selected.size, ...(checksumSha256 ? { checksumSha256 } : {}), dataBase64: bytesToBase64(buffer) }, {
         onSuccess: result => {
           setUploadedProject(result);
           if (!form.name) update("name", projectNameFromFile(selected.name));

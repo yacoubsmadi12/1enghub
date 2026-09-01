@@ -193,11 +193,11 @@ export const appRouter = router({
         }
         return db.select().from(assets).where(filters.length ? and(...filters) : undefined).orderBy(desc(assets.updatedAt)).limit(input?.limit ?? 24);
       }),
-    upload: protectedProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), contentType: z.string().trim().min(1).max(160), sizeBytes: z.number().int().positive().max(26214400), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/), dataBase64: z.string().min(1).max(36000000) })).mutation(async ({ input, ctx }) => {
+    upload: protectedProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), contentType: z.string().trim().min(1).max(160), sizeBytes: z.number().int().positive().max(26214400), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(), dataBase64: z.string().min(1).max(36000000) })).mutation(async ({ input, ctx }) => {
       const bytes = Buffer.from(input.dataBase64, "base64");
       if (bytes.length !== input.sizeBytes) throw new Error("The uploaded project size could not be verified");
       const checksumSha256 = createHash("sha256").update(bytes).digest("hex");
-      if (checksumSha256 !== input.checksumSha256) throw new Error("The uploaded project checksum could not be verified");
+      if (input.checksumSha256 && checksumSha256 !== input.checksumSha256) throw new Error("The uploaded project checksum could not be verified");
       const inspected = await inspectProjectArchive(bytes, input.fileName, input.contentType);
       const safeName = input.fileName.replace(/[^a-zA-Z0-9._-]+/g, "-");
       const uploadId = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
