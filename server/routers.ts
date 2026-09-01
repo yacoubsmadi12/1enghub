@@ -255,7 +255,7 @@ export const appRouter = router({
     assignTeam: adminProcedure.input(z.object({ userId: z.string().uuid(), teamId: z.string().uuid(), isPrimary: z.boolean().default(false) })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
-      await db.insert(teamMemberships).values({ userId: input.userId, teamId: input.teamId, isPrimary: input.isPrimary });
+      await db.insert(teamMemberships).values({ userId: input.userId, teamId: input.teamId, isPrimary: input.isPrimary }).onConflictDoNothing();
       await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "team_membership", entityId: input.userId, metadata: { teamId: input.teamId, isPrimary: input.isPrimary } });
       return { success: true };
     }),
@@ -439,7 +439,8 @@ export const appRouter = router({
           const tagRows = await tx.select({ id: tags.id }).from(tags).where(inArray(tags.name, normalizedTags));
           if (tagRows.length) await tx.insert(assetTags).values(tagRows.map(tag => ({ assetId, tagId: tag.id }))).onConflictDoNothing();
         }
-        await tx.insert(notifications).values({ userId: reviewerId, type: "review_submitted", title: "New asset awaiting review", body: `${input.name} was submitted for your Manager review.`, assetId });
+        await tx.insert(approvals).values({ assetId, kind: "asset_submission", requestedById: ctx.user.id, reviewerId });
+        await tx.insert(notifications).values({ userId: reviewerId, type: "approval_required", title: "New asset awaiting review", body: `${input.name} was submitted for your Manager review.`, assetId });
         await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_submitted", entityType: "asset", entityId: assetId, assetId, metadata: { teamId: input.homeTeamId, reviewerId, hasFile: files.length > 0, projectFileCount: files.length, archiveFormat: input.project?.format ?? null } });
       });
       return { success: true, assetId, status: "pending_review" as const };
