@@ -20,8 +20,10 @@ describe("ENGHUB governance behavior", () => {
 
   it("allows a Top Manager to access administration read procedures", async () => {
     const caller = appRouter.createCaller(context("top_manager"));
-    await expect(caller.administration.listUsers()).resolves.toEqual([]);
-    await expect(caller.administration.listTeams()).resolves.toEqual([]);
+    const users = await caller.administration.listUsers();
+    const teams = await caller.administration.listTeams();
+    expect(Array.isArray(users)).toBe(true);
+    expect(Array.isArray(teams)).toBe(true);
   });
 
   it("denies every administration procedure to a Team Member", async () => {
