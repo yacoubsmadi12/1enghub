@@ -351,6 +351,8 @@ function buildCronUser(
     id: "00000000-0000-0000-0000-000000000001",
     openId: userInfo.openId,
     username: null,
+    employeeNumber: null,
+    managerId: null,
     passwordSalt: null,
     passwordHash: null,
     name: userInfo.name || "Manus Scheduled Task",

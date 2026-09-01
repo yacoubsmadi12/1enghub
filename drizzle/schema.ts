@@ -1,4 +1,5 @@
 import {
+  AnyPgColumn,
   boolean,
   index,
   integer,
@@ -92,6 +93,8 @@ export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
   openId: varchar("open_id", { length: 128 }).notNull().unique(),
   username: varchar("username", { length: 64 }).unique(),
+  employeeNumber: varchar("employee_number", { length: 64 }).unique(),
+  managerId: uuid("manager_id").references((): AnyPgColumn => users.id, { onDelete: "set null" }),
   passwordSalt: varchar("password_salt", { length: 64 }),
   passwordHash: varchar("password_hash", { length: 128 }),
   name: varchar("name", { length: 160 }),
@@ -101,7 +104,7 @@ export const users = pgTable("users", {
   isActive: boolean("is_active").default(true).notNull(),
   lastSignedIn: timestamp("last_signed_in", { withTimezone: true }).defaultNow().notNull(),
   ...timestamps,
-}, table => [index("user_role_idx").on(table.role)]);
+}, table => [index("user_role_idx").on(table.role), index("user_manager_idx").on(table.managerId)]);
 
 export const teamMemberships = pgTable("team_memberships", {
   id: uuid("id").defaultRandom().primaryKey(),

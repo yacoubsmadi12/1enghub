@@ -73,6 +73,8 @@ set +a
 psql "$ENGHUB_DATABASE_URL" -f drizzle/0000_workable_gambit.sql
 psql "$ENGHUB_DATABASE_URL" -f drizzle/0001_internal_account_credentials.sql
 psql "$ENGHUB_DATABASE_URL" -f drizzle/0001_audit_immutability.sql
+psql "$ENGHUB_DATABASE_URL" -f drizzle/0002_lively_kang.sql
+psql "$ENGHUB_DATABASE_URL" -f drizzle/0003_eager_shinobi_shaw.sql
 ```
 
 للتحقق:
@@ -81,7 +83,7 @@ psql "$ENGHUB_DATABASE_URL" -f drizzle/0001_audit_immutability.sql
 psql "$ENGHUB_DATABASE_URL" -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;"
 ```
 
-يجب أن تظهر جداول مثل `users` و`teams` و`assets` و`asset_files` و`approvals` و`notifications` و`audit_events`.
+يجب أن تظهر جداول مثل `users` و`teams` و`assets` و`asset_files` و`approvals` و`notifications` و`audit_events`. وتحقق من الأعمدة الجديدة بالأمر: `psql "$ENGHUB_DATABASE_URL" -c "SELECT employee_number, manager_id FROM users LIMIT 1;"`. إذا كانت قاعدة البيانات تطبق migrations عبر Drizzle بدل التطبيق اليدوي، استخدم `pnpm db:push` بعد مراجعة SQL الناتج ولا تطبق نفس migration مرتين.
 
 ## 5. التشغيل والتحقق
 
@@ -102,7 +104,11 @@ NODE_ENV=production pnpm start
 
 ## 6. منطق الموافقة
 
-يُسمح لعضو الفريق بإنشاء أصل ورفع ملف إلى حالة مقيدة، لكن لا يصبح الأصل منشوراً أو قابلاً للمشاركة العامة داخل المؤسسة حتى يوافق المدير المسؤول عليه. عند طلب التعديل، تعود الحالة إلى `changes_requested` ويُسجّل سبب القرار في `approvals.decision_note`. تُسجّل عمليات الرفع والموافقة والمشاركة والتنزيل في `audit_events`.
+يُسمح لعضو الفريق بإنشاء أصل ورفع ملف إلى حالة مقيدة، لكن لا يصبح الأصل منشوراً أو قابلاً للمشاركة العامة داخل المؤسسة حتى يوافق المدير المباشر المسؤول عنه. عند الإرسال، يحفظ النظام `assets.manager_id` و`approvals.reviewer_id` لنفس المدير؛ لذلك لا تظهر الموافقة في قائمة مدير آخر من نفس الفريق، بينما يستطيع Top Manager رؤية جميع الطلبات. عند طلب التعديل، تعود الحالة إلى `changes_requested` ويُسجّل سبب القرار في `approvals.decision_note`. تُسجّل عمليات الرفع والموافقة وفتح الملفات والتنزيل في `audit_events`.
+
+### استيراد المستخدمين والفرق
+
+من صفحة `/admin/users` يرفع Top Manager ملف `.xlsx` أو `.xls` أو `.csv` يحتوي على `Employee Number`, `Full Name`, `Manager Number`, `Manager Name`, `user name`, `password`, و`Email Address`. يمكن إضافة `Team Name` لإنشاء الفرق أو إعادة استخدامها تلقائيًا. الصف الذي يُشار إلى رقمه أو اسمه كمدير يحصل على دور Manager، وباقي الصفوف التابعة له تحصل على دور Team Member. من صفحة `/manager/team` يستطيع المدير إنشاء أو استيراد أعضاء فريقه فقط؛ ويُفرض ذلك في الخادم وليس بالواجهة فقط. كلمات المرور تُحوّل إلى hash قبل التخزين ولا تُعاد عبر API.
 
 ### الأدوار
 
@@ -114,11 +120,11 @@ NODE_ENV=production pnpm start
 
 ## 7. ملاحظات أمنية
 
-لا ترسل `ENGHUB_DATABASE_URL` إلى المتصفح ولا تضعها في ملفات frontend. تحقق الخوادم من الدور والفريق وحالة الاعتماد في كل إجراء حساس؛ فإخفاء زر في الواجهة ليس بديلاً عن التفويض الخلفي. يجب تقييد أنواع الملفات وحجمها والتحقق من أسماء الملفات ومسارات التخزين قبل الحفظ.
+لا ترسل `ENGHUB_DATABASE_URL` إلى المتصفح ولا تضعها في ملفات frontend. تحقق الخوادم من الدور والفريق وحالة الاعتماد في كل إجراء حساس؛ فإخفاء زر في الواجهة ليس بديلاً عن التفويض الخلفي. يجب تقييد أنواع الملفات وحجمها والتحقق من أسماء الملفات ومسارات التخزين قبل الحفظ. فتح ملفات المشاريع المعلقة يتم عبر مسار موثق للمراجع المعيّن أو Top Manager. ENGHUB يفك ضغط ZIP/RAR أثناء الرفع لفحص manifest، لكنه لا ينفذ كودًا مرفوعًا تلقائيًا على الخادم؛ تشغيل كود غير موثوق يحتاج sandbox مستقلًا وموافقة أمنية واضحة.
 
 ## 8. فرق محرك قاعدة البيانات في بيئة المعاينة
 
-بيئة المعاينة المُدارة قد تعرض اتصالاً متوافقاً مع TiDB/MySQL، بينما النسخة القابلة للتنزيل من ENGHUB مبنية على PostgreSQL كما طلبت. لذلك يجب تطبيق `drizzle/0001_audit_immutability.sql` على PostgreSQL في Ubuntu بعد `drizzle/0000_workable_gambit.sql`. هذا الملف يضيف حماية append-only لسجل التدقيق، ولن يعمل على اتصال TiDB/MySQL.
+بيئة المعاينة المُدارة قد تعرض اتصالاً متوافقاً مع TiDB/MySQL، بينما النسخة القابلة للتنزيل من ENGHUB مبنية على PostgreSQL كما طلبت. لذلك يجب تطبيق migrations PostgreSQL بالترتيب، بما فيها `drizzle/0001_audit_immutability.sql` و`drizzle/0002_lively_kang.sql` و`drizzle/0003_eager_shinobi_shaw.sql`, على Ubuntu. ملف التدقيق يضيف حماية append-only لسجل التدقيق، وملفات migrations هذه لن تعمل على اتصال TiDB/MySQL.
 
 ## 9. الدخول الداخلي للحسابات
 

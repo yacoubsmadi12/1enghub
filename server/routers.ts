@@ -1,5 +1,5 @@
 import { COOKIE_NAME } from "@shared/const";
-import { and, count, desc, eq, ilike, inArray, or, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, ilike, inArray, ne, or, type SQL } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { approvals, assetFiles, assetRelations, assetShares, assetVersions, assets, assetTags, auditEvents, notifications, tags, teamMemberships, teams, users } from "../drizzle/schema";
@@ -8,10 +8,41 @@ import { sdk } from "./_core/sdk";
 import { hashPassword, normalizeInternalUsername, verifyPassword } from "./internalAuth";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { getDb } from "./db";
-import { storagePut } from "./storage";
+import { storageGetSignedUrl, storagePut } from "./storage";
 import { inspectProjectArchive } from "./archive";
+import { parseUserImportWorkbook, type UserImportRow } from "./userImport";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, managerForTeamProcedure, managerProcedure, protectedProcedure, publicProcedure, reviewDecisionProcedure, router, shareProcedure, teamMemberProcedure } from "./_core/trpc";
+
+const userRoleSchema = z.enum(["top_manager", "manager", "team_member"]);
+
+function normalizedPersonName(value: string | null | undefined) {
+  return (value ?? "").trim().toLocaleLowerCase();
+}
+
+async function resolveDirectReviewer(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, submitterId: string, teamId: string) {
+  const submitter = (await db.select({ managerId: users.managerId }).from(users).where(eq(users.id, submitterId)).limit(1))[0];
+  if (submitter?.managerId) {
+    const directManager = (await db.select({ id: users.id }).from(users).where(and(eq(users.id, submitter.managerId), or(eq(users.role, "manager"), eq(users.role, "top_manager")), eq(users.isActive, true))).limit(1))[0];
+    if (directManager) return directManager.id;
+  }
+  const teamManager = (await db.select({ id: users.id }).from(users).innerJoin(teamMemberships, eq(teamMemberships.userId, users.id)).where(and(eq(users.role, "manager"), ne(users.id, submitterId), eq(users.isActive, true), eq(teamMemberships.teamId, teamId))).limit(1))[0];
+  if (teamManager) return teamManager.id;
+  return (await db.select({ id: users.id }).from(users).where(and(eq(users.role, "top_manager"), eq(users.isActive, true))).limit(1))[0]?.id;
+}
+
+function inferredImportRole(row: UserImportRow, managerNumbers: Set<string>, managerNames: Set<string>) {
+  return managerNumbers.has(row.employeeNumber) || managerNames.has(normalizedPersonName(row.fullName)) ? "manager" as const : "team_member" as const;
+}
+
+function importTeamName(row: UserImportRow) {
+  return row.teamName || `${row.managerName || row.fullName} Team`;
+}
+
+function teamCodeForName(name: string) {
+  const slug = name.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "IMPORTED";
+  return `${slug}-${crypto.randomUUID().replace(/-/g, "").slice(0, 6)}`.slice(0, 32);
+}
 
 const internalLoginProcedure = publicProcedure.input(z.object({ username: z.string().trim().min(3).max(64), password: z.string().min(8).max(128) })).mutation(async ({ input, ctx }) => {
   const username = normalizeInternalUsername(input.username);
@@ -92,30 +123,113 @@ export const appRouter = router({
     listUsers: adminProcedure.query(async () => {
       const db = await getDb();
       if (!db) return [];
-      return db.select({ id: users.id, username: users.username, name: users.name, email: users.email, role: users.role, isActive: users.isActive, lastSignedIn: users.lastSignedIn }).from(users).orderBy(users.name);
+      return db.select({ id: users.id, username: users.username, employeeNumber: users.employeeNumber, managerId: users.managerId, name: users.name, email: users.email, role: users.role, isActive: users.isActive, lastSignedIn: users.lastSignedIn }).from(users).orderBy(users.name);
     }),
-    createUser: adminProcedure.input(z.object({ username: z.string().trim().min(3).max(64), name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(320).optional().or(z.literal("")), role: z.enum(["top_manager", "manager", "team_member"]), temporaryPassword: z.string().min(8).max(128), teamId: z.string().uuid().optional(), isActive: z.boolean().default(true) })).mutation(async ({ input, ctx }) => {
+    createUser: adminProcedure.input(z.object({ username: z.string().trim().min(3).max(64), employeeNumber: z.string().trim().max(64).optional().or(z.literal("")), name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(320).optional().or(z.literal("")), role: userRoleSchema, temporaryPassword: z.string().min(8).max(128), managerId: z.string().uuid().optional(), teamId: z.string().uuid().optional(), isActive: z.boolean().default(true) })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
       const username = normalizeInternalUsername(input.username);
       if (!username) throw new Error("Username may contain only letters, numbers, dots, underscores, and hyphens");
       const password = hashPassword(input.temporaryPassword);
       const openId = `internal:${username}`;
-      const existing = await db.select({ id: users.id }).from(users).where(or(eq(users.username, username), eq(users.openId, openId))).limit(1);
-      if (existing.length) throw new Error("Username already exists");
+      const existing = await db.select({ id: users.id }).from(users).where(input.employeeNumber ? or(eq(users.username, username), eq(users.openId, openId), eq(users.employeeNumber, input.employeeNumber)) : or(eq(users.username, username), eq(users.openId, openId))).limit(1);
+      if (existing.length) throw new Error("Username or Employee Number already exists");
+      if (input.managerId) {
+        const manager = (await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, input.managerId)).limit(1))[0];
+        if (!manager || (manager.role !== "manager" && manager.role !== "top_manager")) throw new Error("The selected direct manager is invalid");
+      }
       const created = await db.transaction(async tx => {
-        const rows = await tx.insert(users).values({ openId, username, name: input.name, email: input.email || null, loginMethod: "internal_username", role: input.role, isActive: input.isActive, passwordSalt: password.salt, passwordHash: password.hash }).returning({ id: users.id });
+        const rows = await tx.insert(users).values({ openId, username, employeeNumber: input.employeeNumber || null, managerId: input.managerId ?? null, name: input.name, email: input.email || null, loginMethod: "internal_username", role: input.role, isActive: input.isActive, passwordSalt: password.salt, passwordHash: password.hash }).returning({ id: users.id });
         if (input.teamId && rows[0]) await tx.insert(teamMemberships).values({ userId: rows[0].id, teamId: input.teamId, isPrimary: true });
         if (rows[0]) await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: rows[0].id, metadata: { event: "USER_CREATED", username, role: input.role, teamId: input.teamId ?? null } });
         return rows[0];
       });
       return { success: true, userId: created.id };
     }),
-    updateUser: adminProcedure.input(z.object({ userId: z.string().uuid(), name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(320).optional().or(z.literal("")), role: z.enum(["top_manager", "manager", "team_member"]), isActive: z.boolean() })).mutation(async ({ input, ctx }) => {
+    importUsers: adminProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), dataBase64: z.string().min(1).max(7000000) })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
-      await db.update(users).set({ name: input.name, email: input.email || null, role: input.role, isActive: input.isActive, updatedAt: new Date() }).where(eq(users.id, input.userId));
-      await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: input.userId, metadata: { event: "USER_UPDATED", role: input.role, isActive: input.isActive } });
+      if (!/\.(xlsx?|csv)$/i.test(input.fileName)) throw new Error("Only .xlsx, .xls, or .csv files are supported");
+      const bytes = Buffer.from(input.dataBase64, "base64");
+      if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error("The Excel file must be between 1 byte and 5 MB");
+      const rows = parseUserImportWorkbook(bytes);
+      const managerNumbers = new Set(rows.map(row => row.managerNumber).filter(Boolean) as string[]);
+      const managerNames = new Set(rows.map(row => normalizedPersonName(row.managerName)).filter(Boolean));
+      const result = await db.transaction(async tx => {
+        const currentUsers = await tx.select({ id: users.id, employeeNumber: users.employeeNumber, username: users.username, name: users.name, role: users.role }).from(users);
+        const byEmployee = new Map(currentUsers.filter(row => row.employeeNumber).map(row => [row.employeeNumber!, row]));
+        const byUsername = new Map(currentUsers.filter(row => row.username).map(row => [row.username!, row]));
+        const byName = new Map(currentUsers.filter(row => row.name).map(row => [normalizedPersonName(row.name), row]));
+        const importedByEmployee = new Map<string, { id: string; role: typeof users.$inferSelect.role }>();
+        const importedRows = rows.map(row => ({ row, username: normalizeInternalUsername(row.username), role: inferredImportRole(row, managerNumbers, managerNames) }));
+        for (const item of importedRows) {
+          if (!item.username) throw new Error(`Row ${item.row.rowNumber}: invalid username`);
+          const employeeMatch = byEmployee.get(item.row.employeeNumber);
+          const usernameMatch = byUsername.get(item.username);
+          if (usernameMatch && (!employeeMatch || usernameMatch.id !== employeeMatch.id)) throw new Error(`Row ${item.row.rowNumber}: username ${item.username} is already assigned to another account`);
+          const existing = employeeMatch ?? usernameMatch;
+          const password = hashPassword(item.row.password);
+          const role: typeof users.$inferSelect.role = existing?.role === "top_manager" ? "top_manager" : item.role;
+          if (existing) {
+            await tx.update(users).set({ openId: `internal:${item.username}`, username: item.username, employeeNumber: item.row.employeeNumber, name: item.row.fullName, email: item.row.email, loginMethod: "internal_username", role, isActive: true, passwordSalt: password.salt, passwordHash: password.hash, updatedAt: new Date() }).where(eq(users.id, existing.id));
+            importedByEmployee.set(item.row.employeeNumber, { id: existing.id, role });
+            byEmployee.set(item.row.employeeNumber, { ...existing, employeeNumber: item.row.employeeNumber, username: item.username, name: item.row.fullName, role });
+            byUsername.set(item.username, { ...existing, employeeNumber: item.row.employeeNumber, username: item.username, name: item.row.fullName, role });
+            byName.set(normalizedPersonName(item.row.fullName), { ...existing, employeeNumber: item.row.employeeNumber, username: item.username, name: item.row.fullName, role });
+          } else {
+            const created = (await tx.insert(users).values({ openId: `internal:${item.username}`, username: item.username, employeeNumber: item.row.employeeNumber, name: item.row.fullName, email: item.row.email, loginMethod: "internal_username", role, isActive: true, passwordSalt: password.salt, passwordHash: password.hash }).returning({ id: users.id }))[0];
+            if (!created) throw new Error(`Row ${item.row.rowNumber}: account could not be created`);
+            importedByEmployee.set(item.row.employeeNumber, { id: created.id, role });
+            const createdUser: { id: string; employeeNumber: string; username: string; name: string; role: typeof users.$inferSelect.role } = { id: created.id, employeeNumber: item.row.employeeNumber, username: item.username, name: item.row.fullName, role };
+            byEmployee.set(item.row.employeeNumber, createdUser);
+            byUsername.set(item.username, createdUser);
+            byName.set(normalizedPersonName(item.row.fullName), createdUser);
+          }
+        }
+
+        const teamIds = new Map<string, string>();
+        const existingTeams = await tx.select({ id: teams.id, name: teams.name }).from(teams);
+        for (const team of existingTeams) teamIds.set(normalizedPersonName(team.name), team.id);
+        for (const item of importedRows) {
+          const teamName = importTeamName(item.row).trim();
+          const teamKey = normalizedPersonName(teamName);
+          let teamId = teamIds.get(teamKey);
+          if (!teamId) {
+            const createdTeam = (await tx.insert(teams).values({ name: teamName, code: teamCodeForName(teamName), isActive: true }).returning({ id: teams.id }))[0];
+            if (!createdTeam) throw new Error(`Row ${item.row.rowNumber}: team could not be created`);
+            teamId = createdTeam.id;
+            teamIds.set(teamKey, teamId);
+          }
+          const current = importedByEmployee.get(item.row.employeeNumber);
+          if (!current) throw new Error(`Row ${item.row.rowNumber}: imported account could not be resolved`);
+          const manager = item.row.managerNumber ? importedByEmployee.get(item.row.managerNumber) ?? byEmployee.get(item.row.managerNumber) : item.row.managerName ? byName.get(normalizedPersonName(item.row.managerName)) : undefined;
+          if (manager && manager.id === current.id) throw new Error(`Row ${item.row.rowNumber}: an employee cannot manage itself`);
+          if (manager && manager.role !== "manager" && manager.role !== "top_manager") throw new Error(`Row ${item.row.rowNumber}: direct manager must have Manager or Top Manager role`);
+          await tx.update(users).set({ managerId: manager?.id ?? null, updatedAt: new Date() }).where(eq(users.id, current.id));
+          await tx.insert(teamMemberships).values({ userId: current.id, teamId, isPrimary: true }).onConflictDoNothing();
+          await tx.update(teamMemberships).set({ isPrimary: true }).where(and(eq(teamMemberships.userId, current.id), eq(teamMemberships.teamId, teamId)));
+          await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: current.id, metadata: { event: "USER_IMPORTED", rowNumber: item.row.rowNumber, employeeNumber: item.row.employeeNumber, role: current.role, managerId: manager?.id ?? null, teamId } });
+        }
+        return { imported: rows.length, managers: importedRows.filter(item => item.role === "manager").length, teamMembers: importedRows.filter(item => item.role === "team_member").length, teams: teamIds.size };
+      });
+      return { success: true, ...result };
+    }),
+    updateUser: adminProcedure.input(z.object({ userId: z.string().uuid(), employeeNumber: z.string().trim().max(64).optional().or(z.literal("")), managerId: z.string().uuid().optional(), name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(320).optional().or(z.literal("")), role: userRoleSchema, isActive: z.boolean() })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const duplicate = input.employeeNumber ? await db.select({ id: users.id }).from(users).where(eq(users.employeeNumber, input.employeeNumber)).limit(1) : [];
+      if (duplicate.length && duplicate[0].id !== input.userId) throw new Error("Employee Number already exists");
+      if (input.managerId) {
+        if (input.managerId === input.userId) throw new Error("A user cannot manage itself");
+        const manager = (await db.select({ id: users.id, role: users.role }).from(users).where(eq(users.id, input.managerId)).limit(1))[0];
+        if (!manager || (manager.role !== "manager" && manager.role !== "top_manager")) throw new Error("The selected direct manager is invalid");
+      }
+      if (input.role === "team_member") {
+        const directReports = await db.select({ id: users.id }).from(users).where(eq(users.managerId, input.userId)).limit(1);
+        if (directReports.length) throw new Error("Reassign direct reports before changing this user to Team Member");
+      }
+      await db.update(users).set({ employeeNumber: input.employeeNumber || null, managerId: input.managerId ?? null, name: input.name, email: input.email || null, role: input.role, isActive: input.isActive, updatedAt: new Date() }).where(eq(users.id, input.userId));
+      await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: input.userId, metadata: { event: "USER_UPDATED", employeeNumber: input.employeeNumber || null, managerId: input.managerId ?? null, role: input.role, isActive: input.isActive } });
       return { success: true };
     }),
     resetPassword: adminProcedure.input(z.object({ userId: z.string().uuid(), temporaryPassword: z.string().min(8).max(128) })).mutation(async ({ input, ctx }) => {
@@ -157,12 +271,79 @@ export const appRouter = router({
       return { success: true };
     }),
   }),
+  manager: router({
+    listMyTeamMembers: managerProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+      return db.select({ id: users.id, employeeNumber: users.employeeNumber, username: users.username, name: users.name, email: users.email, role: users.role, isActive: users.isActive }).from(users).where(and(eq(users.managerId, ctx.user.id), eq(users.role, "team_member"))).orderBy(users.name);
+    }),
+    listMyTeams: managerProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+      return db.select({ id: teams.id, name: teams.name, code: teams.code, description: teams.description }).from(teams).innerJoin(teamMemberships, eq(teamMemberships.teamId, teams.id)).where(and(eq(teamMemberships.userId, ctx.user.id), eq(teams.isActive, true))).orderBy(teams.name);
+    }),
+    createTeamMember: managerProcedure.input(z.object({ employeeNumber: z.string().trim().min(1).max(64), username: z.string().trim().min(3).max(64), name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(320).optional().or(z.literal("")), temporaryPassword: z.string().min(8).max(128), teamId: z.string().uuid() })).mutation(async ({ input, ctx }) => {
+      if (ctx.user.role !== "manager") throw new Error("Only a Manager can create team members from this screen");
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const username = normalizeInternalUsername(input.username);
+      if (!username) throw new Error("Username may contain only letters, numbers, dots, underscores, and hyphens");
+      const teamScope = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.userId, ctx.user.id), eq(teamMemberships.teamId, input.teamId)));
+      if (!teamScope.length) throw new Error("You can create members only inside your assigned team");
+      const existing = await db.select({ id: users.id }).from(users).where(or(eq(users.username, username), eq(users.employeeNumber, input.employeeNumber))).limit(1);
+      if (existing.length) throw new Error("Username or Employee Number already exists");
+      const password = hashPassword(input.temporaryPassword);
+      const created = await db.transaction(async tx => {
+        const row = (await tx.insert(users).values({ openId: `internal:${username}`, username, employeeNumber: input.employeeNumber, managerId: ctx.user.id, name: input.name, email: input.email || null, loginMethod: "internal_username", role: "team_member", isActive: true, passwordSalt: password.salt, passwordHash: password.hash }).returning({ id: users.id }))[0];
+        if (!row) throw new Error("Team member could not be created");
+        await tx.insert(teamMemberships).values({ userId: row.id, teamId: input.teamId, isPrimary: true });
+        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: row.id, metadata: { event: "TEAM_MEMBER_CREATED", employeeNumber: input.employeeNumber, managerId: ctx.user.id, teamId: input.teamId } });
+        return row;
+      });
+      return { success: true, userId: created.id };
+    }),
+    importTeamMembers: managerProcedure.input(z.object({ teamId: z.string().uuid(), fileName: z.string().trim().min(1).max(255), dataBase64: z.string().min(1).max(7000000) })).mutation(async ({ input, ctx }) => {
+      if (ctx.user.role !== "manager") throw new Error("Only a Manager can import team members from this screen");
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const scope = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.userId, ctx.user.id), eq(teamMemberships.teamId, input.teamId))).limit(1);
+      if (!scope.length) throw new Error("You can import members only inside your assigned team");
+      if (!/\.(xlsx?|csv)$/i.test(input.fileName)) throw new Error("Only .xlsx, .xls, or .csv files are supported");
+      const bytes = Buffer.from(input.dataBase64, "base64");
+      if (!bytes.length || bytes.length > 5 * 1024 * 1024) throw new Error("The Excel file must be between 1 byte and 5 MB");
+      const rows = parseUserImportWorkbook(bytes);
+      const managerName = normalizedPersonName(ctx.user.name);
+      const managerNumber = ctx.user.employeeNumber?.trim() || "";
+      const managerRows = rows.filter(row => row.managerNumber || row.managerName);
+      if (managerRows.some(row => (row.managerNumber && row.managerNumber !== managerNumber) || (row.managerName && normalizedPersonName(row.managerName) !== managerName))) throw new Error("Every imported row must belong to the logged-in Manager");
+      const referencedNumbers = new Set(rows.map(row => row.managerNumber).filter(Boolean) as string[]);
+      if (rows.some(row => referencedNumbers.has(row.employeeNumber))) throw new Error("Managers cannot be created through the team-member import; use the Top Manager import for managers");
+      const result = await db.transaction(async tx => {
+        let imported = 0;
+        for (const row of rows) {
+          const username = normalizeInternalUsername(row.username);
+          if (!username) throw new Error(`Row ${row.rowNumber}: invalid username`);
+          const existing = await tx.select({ id: users.id }).from(users).where(or(eq(users.username, username), eq(users.employeeNumber, row.employeeNumber))).limit(1);
+          if (existing.length) throw new Error(`Row ${row.rowNumber}: username or Employee Number already exists`);
+          const password = hashPassword(row.password);
+          const created = (await tx.insert(users).values({ openId: `internal:${username}`, username, employeeNumber: row.employeeNumber, managerId: ctx.user.id, name: row.fullName, email: row.email, loginMethod: "internal_username", role: "team_member", isActive: true, passwordSalt: password.salt, passwordHash: password.hash }).returning({ id: users.id }))[0];
+          if (!created) throw new Error(`Row ${row.rowNumber}: account could not be created`);
+          await tx.insert(teamMemberships).values({ userId: created.id, teamId: input.teamId, isPrimary: true });
+          await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: created.id, metadata: { event: "TEAM_MEMBER_IMPORTED", rowNumber: row.rowNumber, employeeNumber: row.employeeNumber, managerId: ctx.user.id, teamId: input.teamId } });
+          imported += 1;
+        }
+        return { imported };
+      });
+      return { success: true, ...result };
+    }),
+  }),
   assets: router({
     get: protectedProcedure.input(z.object({ assetId: z.string().uuid() })).query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return null;
       const asset = (await db.select().from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
       if (!asset) return null;
+      if (asset.status === "pending_review" && ctx.user.role === "manager" && asset.managerId !== ctx.user.id) throw new Error("Pending projects are visible only to the assigned Manager");
       if (ctx.user.role !== "top_manager") {
         const membership = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.teamId, asset.homeTeamId), eq(teamMemberships.userId, ctx.user.id))).limit(1);
         if (asset.ownerId !== ctx.user.id && membership.length === 0) throw new Error("Asset is outside your team scope");
@@ -175,7 +356,24 @@ export const appRouter = router({
         db.select().from(assetRelations).where(or(eq(assetRelations.sourceAssetId, asset.id), eq(assetRelations.targetAssetId, asset.id))).orderBy(desc(assetRelations.createdAt)),
         db.select().from(auditEvents).where(eq(auditEvents.assetId, asset.id)).orderBy(desc(auditEvents.createdAt)).limit(30),
       ]);
-      return { asset, owner: owner[0] ?? null, team: team[0] ?? null, versions, files, relations, activity };
+      const safeFiles = files.map(({ storageUrl: _storageUrl, ...file }) => file);
+      return { asset, owner: owner[0] ?? null, team: team[0] ?? null, versions, files: safeFiles, relations, activity };
+    }),
+    openFile: protectedProcedure.input(z.object({ fileId: z.string().uuid() })).query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const file = (await db.select().from(assetFiles).where(eq(assetFiles.id, input.fileId)).limit(1))[0];
+      if (!file) throw new Error("File not found");
+      const asset = (await db.select({ id: assets.id, ownerId: assets.ownerId, homeTeamId: assets.homeTeamId, managerId: assets.managerId, status: assets.status }).from(assets).where(eq(assets.id, file.assetId)).limit(1))[0];
+      if (!asset) throw new Error("Asset not found");
+      if (ctx.user.role !== "top_manager") {
+        if (asset.status === "pending_review" && (ctx.user.role !== "manager" || asset.managerId !== ctx.user.id)) throw new Error("Pending project files are restricted to the assigned Manager");
+        const membership = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.teamId, asset.homeTeamId), eq(teamMemberships.userId, ctx.user.id))).limit(1);
+        if (asset.ownerId !== ctx.user.id && membership.length === 0) throw new Error("File is outside your team scope");
+      }
+      const url = await storageGetSignedUrl(file.storageKey);
+      await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "file_downloaded", entityType: "asset_file", entityId: file.id, assetId: asset.id, metadata: { fileName: file.fileName, reviewStatus: file.reviewStatus } });
+      return { url, fileName: file.fileName, contentType: file.contentType };
     }),
     list: protectedProcedure
       .input(z.object({ query: z.string().trim().max(120).optional(), type: z.string().max(48).optional(), status: z.string().max(48).optional(), limit: z.number().int().min(1).max(100).default(24) }).optional())
@@ -222,12 +420,14 @@ export const appRouter = router({
       }
       const assetId = crypto.randomUUID();
       const assetKey = `ENG-${assetId.slice(0, 8).toUpperCase()}`;
+      const reviewerId = await resolveDirectReviewer(db, ctx.user.id, input.homeTeamId);
+      if (!reviewerId) throw new Error("No direct Manager or Top Manager is configured for this team");
       if (input.project?.isArchive && input.project.files.length !== input.project.fileCount) throw new Error("The project manifest does not match the extracted archive");
       const files = input.project ? [input.file, ...input.project.files].filter(Boolean) : input.file ? [input.file] : [];
       const uploadPrefix = `enghub/projects/${ctx.user.id}/`;
       if (files.some(file => !file?.fileKey.startsWith(uploadPrefix))) throw new Error("Uploaded project files must belong to the current account");
       await db.transaction(async tx => {
-        await tx.insert(assets).values({ id: assetId, assetKey, name: input.name, summary: input.summary ?? null, type: input.type, classification: input.classification, status: "pending_review", ownerId: ctx.user.id, homeTeamId: input.homeTeamId, technology: input.technology ?? null, currentVersion: input.version });
+        await tx.insert(assets).values({ id: assetId, assetKey, name: input.name, summary: input.summary ?? null, type: input.type, classification: input.classification, status: "pending_review", ownerId: ctx.user.id, managerId: reviewerId, homeTeamId: input.homeTeamId, technology: input.technology ?? null, currentVersion: input.version });
         const version = (await tx.insert(assetVersions).values({ assetId, version: input.version, submittedById: ctx.user.id, releaseNotes: "Initial governed submission" }).returning())[0];
         if (files.length) {
           await tx.insert(assetFiles).values(files.map(file => ({ assetId, versionId: version?.id, uploadedById: ctx.user.id, fileName: file!.fileName, relativePath: file!.relativePath ?? null, fileRole: file!.fileRole ?? "project_file", storageKey: file!.fileKey, storageUrl: file!.fileUrl, contentType: file!.contentType, extension: file!.fileName.includes(".") ? file!.fileName.split(".").pop()!.toLowerCase() : "bin", sizeBytes: file!.sizeBytes, checksumSha256: file!.checksumSha256, reviewStatus: "draft" as const })));
@@ -239,9 +439,8 @@ export const appRouter = router({
           const tagRows = await tx.select({ id: tags.id }).from(tags).where(inArray(tags.name, normalizedTags));
           if (tagRows.length) await tx.insert(assetTags).values(tagRows.map(tag => ({ assetId, tagId: tag.id }))).onConflictDoNothing();
         }
-        const managers = await tx.select({ id: users.id }).from(users).innerJoin(teamMemberships, eq(teamMemberships.userId, users.id)).where(and(eq(users.role, "manager"), eq(users.isActive, true), eq(teamMemberships.teamId, input.homeTeamId))).limit(10);
-        if (managers.length) await tx.insert(notifications).values(managers.map(manager => ({ userId: manager.id, type: "review_submitted" as const, title: "New asset awaiting review", body: `${input.name} was submitted for Manager review.`, assetId })));
-        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_submitted", entityType: "asset", entityId: assetId, assetId, metadata: { teamId: input.homeTeamId, hasFile: files.length > 0, projectFileCount: files.length, archiveFormat: input.project?.format ?? null } });
+        await tx.insert(notifications).values({ userId: reviewerId, type: "review_submitted", title: "New asset awaiting review", body: `${input.name} was submitted for your Manager review.`, assetId });
+        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_submitted", entityType: "asset", entityId: assetId, assetId, metadata: { teamId: input.homeTeamId, reviewerId, hasFile: files.length > 0, projectFileCount: files.length, archiveFormat: input.project?.format ?? null } });
       });
       return { success: true, assetId, status: "pending_review" as const };
     }),
@@ -315,7 +514,7 @@ export const appRouter = router({
       const file = (await db.select().from(assetFiles).where(and(eq(assetFiles.id, input.fileId), eq(assetFiles.assetId, input.assetId))).limit(1))[0];
       const asset = (await db.select().from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
       if (!file || !asset || file.uploadedById !== ctx.user.id) throw new Error("Only the uploader can submit this attachment");
-      const reviewerId = asset.managerId ?? (await db.select({ id: users.id }).from(users).where(eq(users.role, "top_manager")).limit(1))[0]?.id;
+      const reviewerId = asset.managerId ?? await resolveDirectReviewer(db, file.uploadedById, asset.homeTeamId);
       if (!reviewerId) throw new Error("No reviewer is configured for this asset");
       await db.transaction(async tx => {
         await tx.update(assetFiles).set({ reviewStatus: "pending_review", updatedAt: new Date() }).where(eq(assetFiles.id, file.id));
@@ -332,11 +531,11 @@ export const appRouter = router({
       if (!asset) throw new Error("Asset not found");
       if (asset.ownerId !== ctx.user.id && ctx.user.role !== "top_manager" && ctx.user.role !== "manager") throw new Error("Only an authorized owner can submit this asset");
       if (!canSubmitForReview(ctx.user.role, asset.status)) throw new Error("Asset is not eligible for review");
-      const reviewerId = asset.managerId ?? (await db.select({ id: users.id }).from(users).where(eq(users.role, "top_manager")).limit(1))[0]?.id;
+      const reviewerId = asset.managerId ?? await resolveDirectReviewer(db, asset.ownerId, asset.homeTeamId);
       if (!reviewerId) throw new Error("No reviewer is configured for this asset");
       const now = new Date();
       const result = await db.transaction(async tx => {
-        await tx.update(assets).set({ status: "pending_review", updatedAt: now }).where(eq(assets.id, input.assetId));
+        await tx.update(assets).set({ status: "pending_review", managerId: reviewerId, updatedAt: now }).where(eq(assets.id, input.assetId));
         const approval = (await tx.insert(approvals).values({ assetId: input.assetId, kind: "asset_submission", requestedById: ctx.user.id, reviewerId }).returning())[0];
         await tx.insert(notifications).values({ userId: reviewerId, type: "approval_required", title: "Asset review requested", body: `${asset.name} is waiting for your review.`, assetId: asset.id });
         await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_submitted", entityType: "asset", entityId: asset.id, assetId: asset.id, metadata: { reviewerId } });
@@ -369,12 +568,7 @@ export const appRouter = router({
       const db = await getDb();
       if (!db) return [];
       const base = [eq(approvals.status, "pending"), eq(assets.status, "pending_review")];
-      if (ctx.user.role !== "top_manager") {
-        const membershipRows = await db.select({ teamId: teamMemberships.teamId }).from(teamMemberships).where(eq(teamMemberships.userId, ctx.user.id));
-        const teamIds = membershipRows.map(row => row.teamId);
-        if (!teamIds.length) return [];
-        base.push(inArray(assets.homeTeamId, teamIds));
-      }
+      if (ctx.user.role !== "top_manager") base.push(eq(approvals.reviewerId, ctx.user.id));
       return db.select({ approvalId: approvals.id, assetId: assets.id, assetKey: assets.assetKey, name: assets.name, type: assets.type, status: assets.status, homeTeamId: assets.homeTeamId, requestedAt: approvals.requestedAt }).from(approvals).innerJoin(assets, eq(approvals.assetId, assets.id)).where(and(...base)).orderBy(desc(approvals.requestedAt));
     }),
   }),

@@ -63,9 +63,8 @@ export const reviewDecisionProcedure = t.procedure.use(t.middleware(async opts =
   if (!approval) throw new TRPCError({ code: "NOT_FOUND", message: "Approval not found" });
   const asset = (await db.select().from(assets).where(eq(assets.id, approval.assetId)).limit(1))[0];
   if (!asset) throw new TRPCError({ code: "NOT_FOUND", message: "Asset not found" });
-  if (user.role !== "top_manager" && approval.reviewerId !== user.id) {
-    const rows = await db.select({ teamId: teamMemberships.teamId }).from(teamMemberships).where(eq(teamMemberships.userId, user.id));
-    if (user.role !== "manager" || !hasTeamScope(rows.map(row => row.teamId), asset.homeTeamId)) throw new TRPCError({ code: "FORBIDDEN", message: "Review is limited to the assigned team" });
+  if (user.role !== "top_manager" && (user.role !== "manager" || approval.reviewerId !== user.id)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "Only the assigned direct Manager can review this project" });
   }
   return opts.next({ ctx: { ...opts.ctx, user, approval, asset } });
 }));

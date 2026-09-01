@@ -36,4 +36,10 @@ describe("ENGHUB governance behavior", () => {
     const caller = appRouter.createCaller(context("manager"));
     await expect(caller.administration.changeRole({ userId: "00000000-0000-4000-8000-000000000002", role: "team_member" })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
+
+  it("denies team-member creation routes to a Team Member", async () => {
+    const caller = appRouter.createCaller(context("team_member"));
+    await expect(caller.manager.listMyTeamMembers()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(caller.manager.createTeamMember({ employeeNumber: "1002", name: "Member", username: "member.one", temporaryPassword: "member.password", teamId: "00000000-0000-4000-8000-000000000003" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
 });

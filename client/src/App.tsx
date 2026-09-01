@@ -8,6 +8,7 @@ import Home from "./pages/Home";
 import AssetCreate from "./pages/AssetCreate";
 import AssetDetail from "./pages/AssetDetail";
 import UserManagement from "./pages/UserManagement";
+import ManagerTeamManagement from "./pages/ManagerTeamManagement";
 import Section from "./pages/Section";
 
 function Router() {
@@ -18,6 +19,7 @@ function Router() {
       <Route path="/library" component={Home} />
       <Route path="/asset/:id" component={AssetDetail} />
       <Route path="/admin/users" component={UserManagement} />
+      <Route path="/manager/team" component={ManagerTeamManagement} />
       <Route path="/workspace/:section" component={Section} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
