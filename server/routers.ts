@@ -2,7 +2,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { and, count, desc, eq, ilike, inArray, ne, or, type SQL } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { approvals, assetFiles, assetRelations, assetShares, assetVersions, assets, assetTags, auditEvents, notifications, tags, teamMemberships, teams, users } from "../drizzle/schema";
+import { approvals, assetDocuments, assetFiles, assetRelations, assetShares, assetVersions, assets, assetTags, auditEvents, notifications, tags, teamMemberships, teams, users } from "../drizzle/schema";
 import { decisionToAssetStatus, canSubmitForReview } from "./workflow";
 import { sdk } from "./_core/sdk";
 import { hashPassword, normalizeInternalUsername, verifyPassword } from "./internalAuth";
@@ -252,6 +252,29 @@ export const appRouter = router({
       await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: input.userId, metadata: { field: "isActive", value: input.isActive } });
       return { success: true };
     }),
+    deleteUser: adminProcedure.input(z.object({ userId: z.string().uuid() })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      if (input.userId === ctx.user.id) throw new Error("You cannot delete your own administrator account");
+      const target = (await db.select({ id: users.id, username: users.username }).from(users).where(eq(users.id, input.userId)).limit(1))[0];
+      if (!target) throw new Error("User not found");
+      const [ownedAssets, uploadedFiles, versions, approvalsRequested, approvalsReviewed, auditRows] = await Promise.all([
+        db.select({ id: assets.id }).from(assets).where(eq(assets.ownerId, input.userId)).limit(1),
+        db.select({ id: assetFiles.id }).from(assetFiles).where(eq(assetFiles.uploadedById, input.userId)).limit(1),
+        db.select({ id: assetVersions.id }).from(assetVersions).where(eq(assetVersions.submittedById, input.userId)).limit(1),
+        db.select({ id: approvals.id }).from(approvals).where(eq(approvals.requestedById, input.userId)).limit(1),
+        db.select({ id: approvals.id }).from(approvals).where(eq(approvals.reviewerId, input.userId)).limit(1),
+        db.select({ id: auditEvents.id }).from(auditEvents).where(eq(auditEvents.actorId, input.userId)).limit(1),
+      ]);
+      if (ownedAssets.length || uploadedFiles.length || versions.length || approvalsRequested.length || approvalsReviewed.length || auditRows.length) throw new Error("This user has governed history or assets. Disable the account instead of deleting it to preserve audit integrity.");
+      await db.transaction(async tx => {
+        await tx.delete(teamMemberships).where(eq(teamMemberships.userId, input.userId));
+        await tx.update(users).set({ managerId: null }).where(eq(users.managerId, input.userId));
+        await tx.delete(users).where(eq(users.id, input.userId));
+        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: input.userId, metadata: { event: "USER_DELETED", username: target.username } });
+      });
+      return { success: true };
+    }),
     assignTeam: adminProcedure.input(z.object({ userId: z.string().uuid(), teamId: z.string().uuid(), isPrimary: z.boolean().default(false) })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
@@ -338,26 +361,50 @@ export const appRouter = router({
     }),
   }),
   assets: router({
-    get: protectedProcedure.input(z.object({ assetId: z.string().uuid() })).query(async ({ input, ctx }) => {
+    get: protectedProcedure.input(z.object({ assetId: z.string().trim().min(1).max(64) })).query(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) return null;
-      const asset = (await db.select().from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
+      const asset = (await db.select().from(assets).where(or(eq(assets.id, input.assetId), eq(assets.assetKey, input.assetId))).limit(1))[0];
       if (!asset) return null;
       if (asset.status === "pending_review" && ctx.user.role === "manager" && asset.managerId !== ctx.user.id) throw new Error("Pending projects are visible only to the assigned Manager");
       if (ctx.user.role !== "top_manager") {
         const membership = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.teamId, asset.homeTeamId), eq(teamMemberships.userId, ctx.user.id))).limit(1);
-        if (asset.ownerId !== ctx.user.id && membership.length === 0) throw new Error("Asset is outside your team scope");
+        const isAssignedManager = asset.managerId === ctx.user.id;
+        if (asset.ownerId !== ctx.user.id && !isAssignedManager && membership.length === 0) throw new Error("Asset is outside your team scope");
       }
-      const [owner, team, versions, files, relations, activity] = await Promise.all([
+      const [owner, team, versions, files, relations, activity, document] = await Promise.all([
         db.select({ name: users.name, username: users.username }).from(users).where(eq(users.id, asset.ownerId)).limit(1),
         db.select({ name: teams.name, code: teams.code, description: teams.description }).from(teams).where(eq(teams.id, asset.homeTeamId)).limit(1),
         db.select().from(assetVersions).where(eq(assetVersions.assetId, asset.id)).orderBy(desc(assetVersions.createdAt)),
         db.select().from(assetFiles).where(eq(assetFiles.assetId, asset.id)).orderBy(desc(assetFiles.createdAt)),
         db.select().from(assetRelations).where(or(eq(assetRelations.sourceAssetId, asset.id), eq(assetRelations.targetAssetId, asset.id))).orderBy(desc(assetRelations.createdAt)),
         db.select().from(auditEvents).where(eq(auditEvents.assetId, asset.id)).orderBy(desc(auditEvents.createdAt)).limit(30),
+        db.select().from(assetDocuments).where(eq(assetDocuments.assetId, asset.id)).limit(1),
       ]);
       const safeFiles = files.map(({ storageUrl: _storageUrl, ...file }) => file);
-      return { asset, owner: owner[0] ?? null, team: team[0] ?? null, versions, files: safeFiles, relations, activity };
+      return { asset, owner: owner[0] ?? null, team: team[0] ?? null, versions, files: safeFiles, relations, activity, document: document[0] ?? null };
+    }),
+    updateDetails: protectedProcedure.input(z.object({ assetId: z.string().uuid(), description: z.string().trim().max(10000).optional(), businessValue: z.string().trim().max(10000).optional(), estimatedHoursSaved: z.number().int().min(0).max(1000000).optional(), estimatedCostSaved: z.number().int().min(0).max(1000000000).optional(), document: z.object({ purpose: z.string().max(5000).optional(), prerequisites: z.string().max(5000).optional(), installation: z.string().max(10000).optional(), configuration: z.string().max(10000).optional(), usage: z.string().max(10000).optional(), troubleshooting: z.string().max(10000).optional() }).optional() })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const asset = (await db.select({ id: assets.id, ownerId: assets.ownerId, managerId: assets.managerId }).from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
+      if (!asset) throw new Error("Asset not found");
+      if (ctx.user.role !== "top_manager" && asset.ownerId !== ctx.user.id && asset.managerId !== ctx.user.id) throw new Error("Only the asset owner or assigned Manager can edit this asset");
+      await db.transaction(async tx => {
+        const assetUpdate: Partial<typeof assets.$inferInsert> = { updatedAt: new Date() };
+        if (input.description !== undefined) assetUpdate.description = input.description || null;
+        if (input.businessValue !== undefined) assetUpdate.businessValue = input.businessValue || null;
+        if (input.estimatedHoursSaved !== undefined) assetUpdate.estimatedHoursSaved = input.estimatedHoursSaved;
+        if (input.estimatedCostSaved !== undefined) assetUpdate.estimatedCostSaved = input.estimatedCostSaved;
+        await tx.update(assets).set(assetUpdate).where(eq(assets.id, input.assetId));
+        if (input.document) {
+          const existing = (await tx.select({ assetId: assetDocuments.assetId }).from(assetDocuments).where(eq(assetDocuments.assetId, input.assetId)).limit(1))[0];
+          if (existing) await tx.update(assetDocuments).set({ ...input.document, updatedById: ctx.user.id, updatedAt: new Date() }).where(eq(assetDocuments.assetId, input.assetId));
+          else await tx.insert(assetDocuments).values({ assetId: input.assetId, ...input.document, updatedById: ctx.user.id });
+        }
+        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "asset", entityId: input.assetId, assetId: input.assetId, metadata: { event: "ASSET_DETAILS_UPDATED" } });
+      });
+      return { success: true };
     }),
     openFile: protectedProcedure.input(z.object({ fileId: z.string().uuid() })).query(async ({ input, ctx }) => {
       const db = await getDb();
@@ -369,7 +416,8 @@ export const appRouter = router({
       if (ctx.user.role !== "top_manager") {
         if (asset.status === "pending_review" && (ctx.user.role !== "manager" || asset.managerId !== ctx.user.id)) throw new Error("Pending project files are restricted to the assigned Manager");
         const membership = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.teamId, asset.homeTeamId), eq(teamMemberships.userId, ctx.user.id))).limit(1);
-        if (asset.ownerId !== ctx.user.id && membership.length === 0) throw new Error("File is outside your team scope");
+        const isAssignedManager = asset.managerId === ctx.user.id;
+        if (asset.ownerId !== ctx.user.id && !isAssignedManager && membership.length === 0) throw new Error("File is outside your team scope");
       }
       const url = await storageGetSignedUrl(file.storageKey);
       await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "file_downloaded", entityType: "asset_file", entityId: file.id, assetId: asset.id, metadata: { fileName: file.fileName, reviewStatus: file.reviewStatus } });
@@ -387,7 +435,7 @@ export const appRouter = router({
         if (ctx.user.role !== "top_manager") {
           const membershipRows = await db.select({ teamId: teamMemberships.teamId }).from(teamMemberships).where(eq(teamMemberships.userId, ctx.user.id));
           const teamIds = membershipRows.map(row => row.teamId);
-          filters.push(teamIds.length ? or(eq(assets.ownerId, ctx.user.id), inArray(assets.homeTeamId, teamIds)) : eq(assets.ownerId, ctx.user.id));
+          filters.push(teamIds.length ? or(eq(assets.ownerId, ctx.user.id), eq(assets.managerId, ctx.user.id), inArray(assets.homeTeamId, teamIds)) : or(eq(assets.ownerId, ctx.user.id), eq(assets.managerId, ctx.user.id)));
         }
         return db.select().from(assets).where(filters.length ? and(...filters) : undefined).orderBy(desc(assets.updatedAt)).limit(input?.limit ?? 24);
       }),
@@ -411,7 +459,7 @@ export const appRouter = router({
       if (db) await db.insert(auditEvents).values({ actorId: ctx.user.id, action: "file_uploaded", entityType: "project_upload", metadata: { fileName: input.fileName, sizeBytes: input.sizeBytes, contentType: input.contentType, storageKey: uploaded.key, checksumSha256, archiveFormat: inspected.format, projectFileCount: inspected.fileCount, unpackedBytes: inspected.totalBytes } });
       return { file: archiveFile, project: { format: inspected.format, isArchive: inspected.isArchive, archiveName: inspected.archiveName, fileCount: inspected.fileCount, totalBytes: inspected.totalBytes, files: projectFiles } } as const;
     }),
-    submit: protectedProcedure.input(z.object({ name: z.string().trim().min(3).max(240), summary: z.string().trim().max(480).optional(), type: z.enum(["tool", "script", "automation", "source_code", "documentation", "sop", "config_template", "report", "runbook", "troubleshooting_guide", "knowledge"]), classification: z.enum(["internal", "confidential", "restricted"]).default("internal"), homeTeamId: z.string().uuid(), technology: z.string().trim().max(160).optional(), version: z.string().trim().min(1).max(48).default("0.1.0"), tags: z.array(z.string().trim().min(1).max(72)).max(12).default([]), file: z.object({ fileKey: z.string().min(1).max(512), fileUrl: z.string().min(1).max(1024), fileName: z.string().min(1).max(255), relativePath: z.string().max(512).optional(), fileRole: z.enum(["archive", "project_file"]).default("project_file"), contentType: z.string().min(1).max(160), sizeBytes: z.number().int().positive().max(104857600), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }).optional(), project: z.object({ format: z.enum(["zip", "rar", "file"]), isArchive: z.boolean(), archiveName: z.string().max(255), fileCount: z.number().int().min(1).max(1000), totalBytes: z.number().int().positive().max(104857600), files: z.array(z.object({ fileKey: z.string().min(1).max(512), fileUrl: z.string().min(1).max(1024), fileName: z.string().min(1).max(255), relativePath: z.string().min(1).max(512), fileRole: z.literal("project_file"), contentType: z.string().min(1).max(160), sizeBytes: z.number().int().positive().max(26214400), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/) })).max(1000) }).optional() })).mutation(async ({ input, ctx }) => {
+    submit: protectedProcedure.input(z.object({ name: z.string().trim().min(3).max(240), summary: z.string().trim().max(480).optional(), description: z.string().trim().max(10000).optional(), businessValue: z.string().trim().max(10000).optional(), estimatedHoursSaved: z.number().int().min(0).max(1000000).default(0), estimatedCostSaved: z.number().int().min(0).max(1000000000).default(0), document: z.object({ purpose: z.string().max(5000).optional(), prerequisites: z.string().max(5000).optional(), installation: z.string().max(10000).optional(), configuration: z.string().max(10000).optional(), usage: z.string().max(10000).optional(), troubleshooting: z.string().max(10000).optional() }).optional(), type: z.enum(["tool", "script", "automation", "source_code", "documentation", "sop", "config_template", "report", "runbook", "troubleshooting_guide", "knowledge"]), classification: z.enum(["internal", "confidential", "restricted"]).default("internal"), homeTeamId: z.string().uuid(), technology: z.string().trim().max(160).optional(), version: z.string().trim().min(1).max(48).default("0.1.0"), tags: z.array(z.string().trim().min(1).max(72)).max(12).default([]), file: z.object({ fileKey: z.string().min(1).max(512), fileUrl: z.string().min(1).max(1024), fileName: z.string().min(1).max(255), relativePath: z.string().max(512).optional(), fileRole: z.enum(["archive", "project_file"]).default("project_file"), contentType: z.string().min(1).max(160), sizeBytes: z.number().int().positive().max(104857600), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/).optional() }).optional(), project: z.object({ format: z.enum(["zip", "rar", "file"]), isArchive: z.boolean(), archiveName: z.string().max(255), fileCount: z.number().int().min(1).max(1000), totalBytes: z.number().int().positive().max(104857600), files: z.array(z.object({ fileKey: z.string().min(1).max(512), fileUrl: z.string().min(1).max(1024), fileName: z.string().min(1).max(255), relativePath: z.string().min(1).max(512), fileRole: z.literal("project_file"), contentType: z.string().min(1).max(160), sizeBytes: z.number().int().positive().max(26214400), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/) })).max(1000) }).optional() })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
       if (ctx.user.role !== "top_manager") {
@@ -427,7 +475,7 @@ export const appRouter = router({
       const uploadPrefix = `enghub/projects/${ctx.user.id}/`;
       if (files.some(file => !file?.fileKey.startsWith(uploadPrefix))) throw new Error("Uploaded project files must belong to the current account");
       await db.transaction(async tx => {
-        await tx.insert(assets).values({ id: assetId, assetKey, name: input.name, summary: input.summary ?? null, type: input.type, classification: input.classification, status: "pending_review", ownerId: ctx.user.id, managerId: reviewerId, homeTeamId: input.homeTeamId, technology: input.technology ?? null, currentVersion: input.version });
+        await tx.insert(assets).values({ id: assetId, assetKey, name: input.name, summary: input.summary ?? null, description: input.description ?? null, businessValue: input.businessValue ?? null, estimatedHoursSaved: input.estimatedHoursSaved, estimatedCostSaved: input.estimatedCostSaved, type: input.type, classification: input.classification, status: "pending_review", ownerId: ctx.user.id, managerId: reviewerId, homeTeamId: input.homeTeamId, technology: input.technology ?? null, currentVersion: input.version });
         const version = (await tx.insert(assetVersions).values({ assetId, version: input.version, submittedById: ctx.user.id, releaseNotes: "Initial governed submission" }).returning())[0];
         if (files.length) {
           await tx.insert(assetFiles).values(files.map(file => ({ assetId, versionId: version?.id, uploadedById: ctx.user.id, fileName: file!.fileName, relativePath: file!.relativePath ?? null, fileRole: file!.fileRole ?? "project_file", storageKey: file!.fileKey, storageUrl: file!.fileUrl, contentType: file!.contentType, extension: file!.fileName.includes(".") ? file!.fileName.split(".").pop()!.toLowerCase() : "bin", sizeBytes: file!.sizeBytes, checksumSha256: file!.checksumSha256, reviewStatus: "draft" as const })));
@@ -439,6 +487,7 @@ export const appRouter = router({
           const tagRows = await tx.select({ id: tags.id }).from(tags).where(inArray(tags.name, normalizedTags));
           if (tagRows.length) await tx.insert(assetTags).values(tagRows.map(tag => ({ assetId, tagId: tag.id }))).onConflictDoNothing();
         }
+        if (input.document) await tx.insert(assetDocuments).values({ assetId, ...input.document, updatedById: ctx.user.id });
         await tx.insert(approvals).values({ assetId, kind: "asset_submission", requestedById: ctx.user.id, reviewerId });
         await tx.insert(notifications).values({ userId: reviewerId, type: "approval_required", title: "New asset awaiting review", body: `${input.name} was submitted for your Manager review.`, assetId });
         await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_submitted", entityType: "asset", entityId: assetId, assetId, metadata: { teamId: input.homeTeamId, reviewerId, hasFile: files.length > 0, projectFileCount: files.length, archiveFormat: input.project?.format ?? null } });
