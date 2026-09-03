@@ -1,5 +1,5 @@
 import { COOKIE_NAME } from "@shared/const";
-import { and, count, desc, eq, ilike, inArray, ne, or, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gt, ilike, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { approvals, assetDocuments, assetFiles, assetRelations, assetShares, assetVersions, assets, assetTags, auditEvents, notifications, tags, teamMemberships, teams, users } from "../drizzle/schema";
@@ -275,6 +275,41 @@ export const appRouter = router({
       });
       return { success: true };
     }),
+    deleteUsers: adminProcedure.input(z.object({ userIds: z.array(z.string().uuid()).min(1).max(500) })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const userIds = Array.from(new Set(input.userIds));
+      let deleted = 0;
+      let disabled = 0;
+      const skipped: string[] = [];
+      await db.transaction(async tx => {
+        for (const userId of userIds) {
+          if (userId === ctx.user.id) { skipped.push(userId); continue; }
+          const target = (await tx.select({ id: users.id, username: users.username }).from(users).where(eq(users.id, userId)).limit(1))[0];
+          if (!target) { skipped.push(userId); continue; }
+          const [ownedAssets, uploadedFiles, versions, approvalsRequested, approvalsReviewed, auditRows] = await Promise.all([
+            tx.select({ id: assets.id }).from(assets).where(eq(assets.ownerId, userId)).limit(1),
+            tx.select({ id: assetFiles.id }).from(assetFiles).where(eq(assetFiles.uploadedById, userId)).limit(1),
+            tx.select({ id: assetVersions.id }).from(assetVersions).where(eq(assetVersions.submittedById, userId)).limit(1),
+            tx.select({ id: approvals.id }).from(approvals).where(eq(approvals.requestedById, userId)).limit(1),
+            tx.select({ id: approvals.id }).from(approvals).where(eq(approvals.reviewerId, userId)).limit(1),
+            tx.select({ id: auditEvents.id }).from(auditEvents).where(eq(auditEvents.actorId, userId)).limit(1),
+          ]);
+          if (ownedAssets.length || uploadedFiles.length || versions.length || approvalsRequested.length || approvalsReviewed.length || auditRows.length) {
+            await tx.update(users).set({ isActive: false, updatedAt: new Date() }).where(eq(users.id, userId));
+            await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: userId, metadata: { event: "USER_DISABLED_BY_BULK_DELETE", username: target.username } });
+            disabled += 1;
+            continue;
+          }
+          await tx.delete(teamMemberships).where(eq(teamMemberships.userId, userId));
+          await tx.update(users).set({ managerId: null }).where(eq(users.managerId, userId));
+          await tx.delete(users).where(eq(users.id, userId));
+          await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: userId, metadata: { event: "USER_DELETED", username: target.username } });
+          deleted += 1;
+        }
+      });
+      return { success: true, deleted, disabled, skipped };
+    }),
     assignTeam: adminProcedure.input(z.object({ userId: z.string().uuid(), teamId: z.string().uuid(), isPrimary: z.boolean().default(false) })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
@@ -439,6 +474,31 @@ export const appRouter = router({
         }
         return db.select().from(assets).where(filters.length ? and(...filters) : undefined).orderBy(desc(assets.updatedAt)).limit(input?.limit ?? 24);
       }),
+    myAssets: protectedProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+      return db.select().from(assets).where(eq(assets.ownerId, ctx.user.id)).orderBy(desc(assets.updatedAt));
+    }),
+    sharedWithMe: protectedProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+      const teamRows = await db.select({ teamId: teamMemberships.teamId }).from(teamMemberships).where(eq(teamMemberships.userId, ctx.user.id));
+      const teamIds = teamRows.map(row => row.teamId);
+      const shareScope = teamIds.length ? or(eq(assetShares.recipientUserId, ctx.user.id), inArray(assetShares.recipientTeamId, teamIds)) : eq(assetShares.recipientUserId, ctx.user.id);
+      const shareRows = await db.select({ assetId: assetShares.assetId }).from(assetShares).where(and(shareScope, isNull(assetShares.revokedAt), or(isNull(assetShares.expiresAt), gt(assetShares.expiresAt, new Date()))));
+      const assetIds = Array.from(new Set(shareRows.map(row => row.assetId)));
+      if (!assetIds.length) return [];
+      return db.select().from(assets).where(and(inArray(assets.id, assetIds), or(eq(assets.status, "approved"), eq(assets.status, "published"), eq(assets.status, "active")))).orderBy(desc(assets.updatedAt));
+    }),
+    knowledgeHub: protectedProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+      if (ctx.user.role === "top_manager") return db.select().from(assets).where(or(eq(assets.status, "approved"), eq(assets.status, "published"), eq(assets.status, "active"))).orderBy(desc(assets.updatedAt));
+      const teamRows = await db.select({ teamId: teamMemberships.teamId }).from(teamMemberships).where(eq(teamMemberships.userId, ctx.user.id));
+      const teamIds = teamRows.map(row => row.teamId);
+      if (!teamIds.length) return [];
+      return db.select().from(assets).where(and(inArray(assets.homeTeamId, teamIds), or(eq(assets.status, "approved"), eq(assets.status, "published"), eq(assets.status, "active")))).orderBy(desc(assets.updatedAt));
+    }),
     upload: protectedProcedure.input(z.object({ fileName: z.string().trim().min(1).max(255), contentType: z.string().trim().min(1).max(160), sizeBytes: z.number().int().positive().max(26214400), checksumSha256: z.string().regex(/^[a-f0-9]{64}$/).optional(), dataBase64: z.string().min(1).max(36000000) })).mutation(async ({ input, ctx }) => {
       const bytes = Buffer.from(input.dataBase64, "base64");
       if (bytes.length !== input.sizeBytes) throw new Error("The uploaded project size could not be verified");
@@ -508,6 +568,20 @@ export const appRouter = router({
         await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_published", entityType: "asset", entityId: asset.id, assetId: asset.id, metadata: {} });
       });
       return { success: true };
+    }),
+    deleteAsset: protectedProcedure.input(z.object({ assetId: z.string().uuid() })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const asset = (await db.select({ id: assets.id, ownerId: assets.ownerId, name: assets.name, status: assets.status }).from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
+      if (!asset) throw new Error("Asset not found");
+      if (ctx.user.role !== "top_manager" && asset.ownerId !== ctx.user.id) throw new Error("Only the asset owner or Top Manager can remove this asset");
+      const now = new Date();
+      await db.transaction(async tx => {
+        await tx.update(assets).set({ status: "archived", archivedAt: now, updatedAt: now }).where(eq(assets.id, asset.id));
+        await tx.insert(notifications).values({ userId: asset.ownerId, type: "asset_archived", title: "Asset archived", body: `${asset.name} was removed from active workspace visibility.`, assetId: asset.id });
+        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "asset", entityId: asset.id, assetId: asset.id, metadata: { event: "ASSET_ARCHIVED_BY_OWNER", previousStatus: asset.status } });
+      });
+      return { success: true, status: "archived" as const };
     }),
     archive: protectedProcedure.input(z.object({ assetId: z.string().uuid() })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
@@ -593,6 +667,11 @@ export const appRouter = router({
       });
       return { success: true, approvalId: result?.id };
     }),
+    requests: protectedProcedure.query(async ({ ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+      return db.select({ approvalId: approvals.id, assetId: assets.id, assetKey: assets.assetKey, name: assets.name, type: assets.type, assetStatus: assets.status, approvalStatus: approvals.status, reviewerId: approvals.reviewerId, requestedAt: approvals.requestedAt, decidedAt: approvals.decidedAt, decisionNote: approvals.decisionNote }).from(approvals).innerJoin(assets, eq(approvals.assetId, assets.id)).where(eq(approvals.requestedById, ctx.user.id)).orderBy(desc(approvals.requestedAt));
+    }),
     decide: reviewDecisionProcedure.input(z.object({ approvalId: z.string().uuid(), decision: z.enum(["approved", "changes_requested", "rejected"]), note: z.string().trim().max(2000).optional() })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
@@ -617,7 +696,7 @@ export const appRouter = router({
     managerQueue: managerProcedure.query(async ({ ctx }) => {
       const db = await getDb();
       if (!db) return [];
-      const base = [eq(approvals.status, "pending"), eq(assets.status, "pending_review")];
+      const base = [eq(approvals.status, "pending"), or(eq(assets.status, "pending_review"), eq(approvals.kind, "file_attachment"))];
       if (ctx.user.role !== "top_manager") base.push(eq(approvals.reviewerId, ctx.user.id));
       return db.select({ approvalId: approvals.id, assetId: assets.id, assetKey: assets.assetKey, name: assets.name, type: assets.type, status: assets.status, homeTeamId: assets.homeTeamId, requestedAt: approvals.requestedAt }).from(approvals).innerJoin(assets, eq(approvals.assetId, assets.id)).where(and(...base)).orderBy(desc(approvals.requestedAt));
     }),
