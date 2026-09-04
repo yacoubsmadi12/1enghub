@@ -1,4 +1,5 @@
 import BrandMark from "@/components/BrandMark";
+import ThemeSwitcher from "@/components/ThemeSwitcher";
 import { useMemo, useState, type ChangeEvent } from "react";
 import { Download, FileSpreadsheet, KeyRound, Plus, Save, Search, ShieldCheck, Trash2, UploadCloud, UserRound, UsersRound, X } from "lucide-react";
 import { Link } from "wouter";
@@ -98,7 +99,7 @@ export default function UserManagement() {
   if (!user || user.role !== "top_manager") return <div className="min-h-screen bg-[#080f19] p-8 text-sm text-rose-300"><Link href="/" className="text-cyan-300">Return to ENGHUB</Link><p className="mt-6">User management is restricted to Top Managers.</p></div>;
 
   return <div className="min-h-screen bg-[#080f19] text-slate-200">
-    <header className="border-b border-white/[0.07] bg-[#0b1421] px-6 py-4"><div className="mx-auto flex max-w-7xl items-center justify-between"><div className="flex items-center gap-3"><BrandMark /><div><div className="brand-name">ENGHUB</div><div className="text-[10px] text-slate-500">Governance console</div></div></div><Link href="/" className="text-xs text-cyan-300">Back to workspace</Link></div></header>
+    <header className="border-b border-white/[0.07] bg-[#0b1421] px-6 py-4"><div className="mx-auto flex max-w-7xl items-center justify-between gap-4"><div className="flex items-center gap-3"><BrandMark /><div><div className="brand-name">ENGHUB</div><div className="text-[10px] text-slate-500">Governance console</div></div></div><div className="flex items-center gap-4"><ThemeSwitcher /><Link href="/" className="text-xs text-cyan-300">Back to workspace</Link></div></div></header>
     <main className="admin-console mx-auto max-w-7xl px-6 py-10">
       <div className="eyebrow"><ShieldCheck size={13} /> Access governance</div>
       <div className="mt-3 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-3xl font-semibold tracking-tight text-white">User Management</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">Create accounts, import complete teams, assign direct managers, and maintain an auditable access boundary.</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" onClick={downloadTemplate}><Download size={14} /> Excel template</Button><Button onClick={() => { setFormOpen(open => !open); setNotice(""); setError(""); }} className="bg-cyan-400 text-slate-950 hover:bg-cyan-300"><Plus size={15} /> {formOpen ? "Close form" : "Create user"}</Button></div></div>
