@@ -632,6 +632,14 @@ export const appRouter = router({
       if (ctx.user.role !== "top_manager" && asset.ownerId !== ctx.user.id) throw new Error("Only the asset owner or Top Manager can delete this project");
       await db.transaction(async tx => {
         await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "asset", entityId: asset.id, assetId: asset.id, metadata: { event: "ASSET_DELETED", assetName: asset.name, previousStatus: asset.status } });
+        await tx.delete(assetRelations).where(or(eq(assetRelations.sourceAssetId, asset.id), eq(assetRelations.targetAssetId, asset.id)));
+        await tx.delete(assetShares).where(eq(assetShares.assetId, asset.id));
+        await tx.delete(notifications).where(eq(notifications.assetId, asset.id));
+        await tx.delete(approvals).where(eq(approvals.assetId, asset.id));
+        await tx.delete(assetTags).where(eq(assetTags.assetId, asset.id));
+        await tx.delete(assetDocuments).where(eq(assetDocuments.assetId, asset.id));
+        await tx.delete(assetFiles).where(eq(assetFiles.assetId, asset.id));
+        await tx.delete(assetVersions).where(eq(assetVersions.assetId, asset.id));
         await tx.delete(assets).where(eq(assets.id, asset.id));
       });
       return { success: true, status: "deleted" as const };
