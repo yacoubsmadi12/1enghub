@@ -10,11 +10,13 @@ import AssetDetail from "./pages/AssetDetail";
 import UserManagement from "./pages/UserManagement";
 import ManagerTeamManagement from "./pages/ManagerTeamManagement";
 import Section from "./pages/Section";
+import ForgotPassword from "./pages/ForgotPassword";
 
 function Router() {
   return (
     <Switch>
       <Route path={"/"} component={Home} />
+      <Route path="/forgot-password" component={ForgotPassword} />
       <Route path={"/assets/new"} component={AssetCreate} />
       <Route path="/library" component={Home} />
       <Route path="/asset/:id" component={AssetDetail} />

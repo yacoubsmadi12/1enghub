@@ -281,6 +281,26 @@ export const auditEvents = pgTable("audit_events", {
 ]);
 
 export type User = typeof users.$inferSelect;
+export const smtpSettings = pgTable("smtp_settings", {
+  id: integer("id").primaryKey().default(1),
+  host: varchar("host", { length: 255 }).notNull(),
+  port: integer("port").notNull().default(587),
+  secure: boolean("secure").notNull().default(false),
+  username: varchar("username", { length: 320 }).notNull(),
+  passwordEncrypted: text("password_encrypted").notNull(),
+  fromEmail: varchar("from_email", { length: 320 }).notNull(),
+  updatedById: uuid("updated_by_id").references(() => users.id, { onDelete: "set null" }),
+  ...timestamps,
+});
+
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, table => [index("password_reset_user_idx").on(table.userId, table.expiresAt)]);
 export type InsertUser = typeof users.$inferInsert;
 export type UserRole = (typeof userRoleEnum.enumValues)[number];
 export type AssetStatus = (typeof assetStatusEnum.enumValues)[number];

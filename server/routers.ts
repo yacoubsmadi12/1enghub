@@ -1,8 +1,8 @@
 import { COOKIE_NAME } from "@shared/const";
 import { and, count, desc, eq, gt, ilike, inArray, isNull, ne, or, type SQL } from "drizzle-orm";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
-import { approvals, assetDocuments, assetFiles, assetRelations, assetShares, assetVersions, assets, assetTags, auditEvents, notifications, tags, teamMemberships, teams, users } from "../drizzle/schema";
+import { approvals, assetDocuments, assetFiles, assetRelations, assetShares, assetVersions, assets, assetTags, auditEvents, notifications, passwordResetTokens, smtpSettings, tags, teamMemberships, teams, users } from "../drizzle/schema";
 import { decisionToAssetStatus, canSubmitForReview } from "./workflow";
 import { sdk } from "./_core/sdk";
 import { hashPassword, normalizeInternalUsername, verifyPassword } from "./internalAuth";
@@ -10,6 +10,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { getDb } from "./db";
 import { storageGetSignedUrl, storagePut } from "./storage";
 import { inspectProjectArchive } from "./archive";
+import { decryptSecret, encryptSecret, sendPasswordResetEmail } from "./email";
 import { parseUserImportWorkbook, type UserImportRow } from "./userImport";
 import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, managerForTeamProcedure, managerProcedure, protectedProcedure, publicProcedure, reviewDecisionProcedure, router, shareProcedure, teamMemberProcedure } from "./_core/trpc";
@@ -67,6 +68,32 @@ export const appRouter = router({
     // Keep both names so older open tabs can finish their login after a deploy.
     login: internalLoginProcedure,
     internalLogin: internalLoginProcedure,
+    requestPasswordReset: publicProcedure.input(z.object({ identifier: z.string().trim().min(3).max(320) })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const normalized = input.identifier.toLowerCase();
+      const account = (await db.select({ id: users.id, email: users.email, name: users.name }).from(users).where(or(eq(users.username, normalized), eq(users.email, normalized))).limit(1))[0];
+      const smtp = (await db.select().from(smtpSettings).where(eq(smtpSettings.id, 1)).limit(1))[0];
+      if (account?.email && smtp) {
+        const rawToken = randomBytes(32).toString("hex");
+        await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, account.id));
+        await db.insert(passwordResetTokens).values({ userId: account.id, tokenHash: createHash("sha256").update(rawToken).digest("hex"), expiresAt: new Date(Date.now() + 30 * 60 * 1000) });
+        const protocol = process.env.NODE_ENV === "production" ? "https" : "http";
+        const host = process.env.PUBLIC_APP_URL || `${protocol}://${ctx.req.get("host")}`;
+        await sendPasswordResetEmail({ host: smtp.host, port: smtp.port, secure: smtp.secure, username: smtp.username, password: decryptSecret(smtp.passwordEncrypted), fromEmail: smtp.fromEmail }, account.email, `${host}/forgot-password?token=${rawToken}`, account.name);
+      }
+      return { success: true, message: "If the account exists and has an email address, a reset link has been sent." };
+    }),
+    resetPassword: publicProcedure.input(z.object({ token: z.string().min(32).max(128), newPassword: z.string().min(8).max(128) })).mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const tokenHash = createHash("sha256").update(input.token).digest("hex");
+      const row = (await db.select({ id: passwordResetTokens.id, userId: passwordResetTokens.userId }).from(passwordResetTokens).where(and(eq(passwordResetTokens.tokenHash, tokenHash), gt(passwordResetTokens.expiresAt, new Date()), isNull(passwordResetTokens.usedAt))).limit(1))[0];
+      if (!row) throw new Error("This reset link is invalid or has expired");
+      const password = hashPassword(input.newPassword);
+      await db.transaction(async tx => { await tx.update(users).set({ passwordSalt: password.salt, passwordHash: password.hash, updatedAt: new Date() }).where(eq(users.id, row.userId)); await tx.update(passwordResetTokens).set({ usedAt: new Date() }).where(eq(passwordResetTokens.id, row.id)); });
+      return { success: true };
+    }),
     me: publicProcedure.query(opts => {
       if (!opts.ctx.user) return null;
       const { passwordSalt: _passwordSalt, passwordHash: _passwordHash, ...safeUser } = opts.ctx.user;
@@ -93,7 +120,16 @@ export const appRouter = router({
         db.select({ value: count() }).from(assets).where(scope ? and(scope, or(eq(assets.status, "active"), eq(assets.status, "published"))) : or(eq(assets.status, "active"), eq(assets.status, "published"))),
         db.select({ value: count() }).from(assets).where(scope ? and(scope, eq(assets.status, "pending_review")) : eq(assets.status, "pending_review")),
       ]);
-      return { totalAssets: Number(total[0]?.value ?? 0), activeAssets: Number(active[0]?.value ?? 0), pendingApprovals: Number(pending[0]?.value ?? 0) };
+      const visibleAssets = await db.select({ ownerId: assets.ownerId, homeTeamId: assets.homeTeamId, status: assets.status, estimatedHoursSaved: assets.estimatedHoursSaved, estimatedCostSaved: assets.estimatedCostSaved, createdAt: assets.createdAt }).from(assets).where(scope);
+      const teamsRows = await db.select({ id: teams.id, name: teams.name }).from(teams);
+      const usersRows = await db.select({ id: users.id, name: users.name, username: users.username, role: users.role }).from(users);
+      const teamName = new Map(teamsRows.map(item => [item.id, item.name]));
+      const userName = new Map(usersRows.map(item => [item.id, item.name || item.username || "Unknown"]));
+      const teamScoreMap = visibleAssets.reduce((map, item) => { const current = map.get(item.homeTeamId) || { teamId: item.homeTeamId, team: teamName.get(item.homeTeamId) || "Unassigned", successful: 0, hoursSaved: 0, score: 0 }; const successful = ["approved", "published", "active"].includes(item.status); current.successful += successful ? 1 : 0; current.hoursSaved += item.estimatedHoursSaved || 0; current.score += (successful ? 25 : 5) + Math.min(item.estimatedHoursSaved || 0, 100); map.set(item.homeTeamId, current); return map; }, new Map<string, { teamId: string; team: string; successful: number; hoursSaved: number; score: number }>());
+      const teamScores = Array.from(teamScoreMap.values()).sort((a, b) => b.score - a.score).slice(0, 6);
+      const contributorMap = new Map<string, { userId: string; user: string; uploads: number; successful: number; hoursSaved: number; score: number }>();
+      for (const item of visibleAssets) { const current = contributorMap.get(item.ownerId) || { userId: item.ownerId, user: userName.get(item.ownerId) || "Unknown", uploads: 0, successful: 0, hoursSaved: 0, score: 0 }; const successful = ["approved", "published", "active"].includes(item.status); current.uploads += 1; current.successful += successful ? 1 : 0; current.hoursSaved += item.estimatedHoursSaved || 0; current.score += (successful ? 30 : 8) + Math.min(item.estimatedHoursSaved || 0, 100); contributorMap.set(item.ownerId, current); }
+      return { totalAssets: Number(total[0]?.value ?? 0), activeAssets: Number(active[0]?.value ?? 0), pendingApprovals: Number(pending[0]?.value ?? 0), hoursSaved: visibleAssets.reduce((sum, item) => sum + (item.estimatedHoursSaved || 0), 0), teamScores, topContributors: Array.from(contributorMap.values()).sort((a, b) => b.score - a.score).slice(0, 6) };
     }),
   }),
   teams: router({
@@ -120,6 +156,21 @@ export const appRouter = router({
     }),
   }),
   administration: router({
+    getSmtpSettings: adminProcedure.query(async () => {
+      const db = await getDb();
+      if (!db) return null;
+      const row = (await db.select({ host: smtpSettings.host, port: smtpSettings.port, secure: smtpSettings.secure, username: smtpSettings.username, fromEmail: smtpSettings.fromEmail }).from(smtpSettings).where(eq(smtpSettings.id, 1)).limit(1))[0];
+      return row ?? null;
+    }),
+    saveSmtpSettings: adminProcedure.input(z.object({ host: z.string().trim().min(1).max(255), port: z.number().int().min(1).max(65535), secure: z.boolean(), username: z.string().trim().min(1).max(320), password: z.string().max(512).optional(), fromEmail: z.string().trim().email().max(320) })).mutation(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database unavailable");
+      const current = (await db.select({ passwordEncrypted: smtpSettings.passwordEncrypted }).from(smtpSettings).where(eq(smtpSettings.id, 1)).limit(1))[0];
+      const passwordEncrypted = input.password ? encryptSecret(input.password) : current?.passwordEncrypted;
+      if (!passwordEncrypted) throw new Error("SMTP password is required for the first setup");
+      await db.insert(smtpSettings).values({ id: 1, host: input.host, port: input.port, secure: input.secure, username: input.username, passwordEncrypted, fromEmail: input.fromEmail, updatedById: ctx.user.id }).onConflictDoUpdate({ target: smtpSettings.id, set: { host: input.host, port: input.port, secure: input.secure, username: input.username, passwordEncrypted, fromEmail: input.fromEmail, updatedById: ctx.user.id, updatedAt: new Date() } });
+      return { success: true };
+    }),
     listUsers: adminProcedure.query(async () => {
       const db = await getDb();
       if (!db) return [];
@@ -258,6 +309,8 @@ export const appRouter = router({
       if (input.userId === ctx.user.id) throw new Error("You cannot delete your own administrator account");
       const target = (await db.select({ id: users.id, username: users.username }).from(users).where(eq(users.id, input.userId)).limit(1))[0];
       if (!target) throw new Error("User not found");
+      const targetRole = (await db.select({ role: users.role }).from(users).where(eq(users.id, input.userId)).limit(1))[0]?.role;
+      if (targetRole === "top_manager") throw new Error("Top Manager accounts cannot be deleted; change the password or disable the account instead.");
       const [ownedAssets, uploadedFiles, versions, approvalsRequested, approvalsReviewed, auditRows] = await Promise.all([
         db.select({ id: assets.id }).from(assets).where(eq(assets.ownerId, input.userId)).limit(1),
         db.select({ id: assetFiles.id }).from(assetFiles).where(eq(assetFiles.uploadedById, input.userId)).limit(1),
@@ -287,6 +340,8 @@ export const appRouter = router({
           if (userId === ctx.user.id) { skipped.push(userId); continue; }
           const target = (await tx.select({ id: users.id, username: users.username }).from(users).where(eq(users.id, userId)).limit(1))[0];
           if (!target) { skipped.push(userId); continue; }
+          const targetRole = (await tx.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1))[0]?.role;
+          if (targetRole === "top_manager") { skipped.push(userId); continue; }
           const [ownedAssets, uploadedFiles, versions, approvalsRequested, approvalsReviewed, auditRows] = await Promise.all([
             tx.select({ id: assets.id }).from(assets).where(eq(assets.ownerId, userId)).limit(1),
             tx.select({ id: assetFiles.id }).from(assetFiles).where(eq(assetFiles.uploadedById, userId)).limit(1),
@@ -574,14 +629,12 @@ export const appRouter = router({
       if (!db) throw new Error("Database unavailable");
       const asset = (await db.select({ id: assets.id, ownerId: assets.ownerId, name: assets.name, status: assets.status }).from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
       if (!asset) throw new Error("Asset not found");
-      if (ctx.user.role !== "top_manager" && asset.ownerId !== ctx.user.id) throw new Error("Only the asset owner or Top Manager can remove this asset");
-      const now = new Date();
+      if (ctx.user.role !== "top_manager" && asset.ownerId !== ctx.user.id) throw new Error("Only the asset owner or Top Manager can delete this project");
       await db.transaction(async tx => {
-        await tx.update(assets).set({ status: "archived", archivedAt: now, updatedAt: now }).where(eq(assets.id, asset.id));
-        await tx.insert(notifications).values({ userId: asset.ownerId, type: "asset_archived", title: "Asset archived", body: `${asset.name} was removed from active workspace visibility.`, assetId: asset.id });
-        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "asset", entityId: asset.id, assetId: asset.id, metadata: { event: "ASSET_ARCHIVED_BY_OWNER", previousStatus: asset.status } });
+        await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "asset", entityId: asset.id, assetId: asset.id, metadata: { event: "ASSET_DELETED", assetName: asset.name, previousStatus: asset.status } });
+        await tx.delete(assets).where(eq(assets.id, asset.id));
       });
-      return { success: true, status: "archived" as const };
+      return { success: true, status: "deleted" as const };
     }),
     archive: protectedProcedure.input(z.object({ assetId: z.string().uuid() })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
