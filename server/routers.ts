@@ -169,7 +169,10 @@ export const appRouter = router({
       if (!db) return [];
       if (ctx.user.role !== "top_manager") {
         const scope = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.teamId, input.teamId), eq(teamMemberships.userId, ctx.user.id))).limit(1);
-        if (!scope.length) throw new Error("You can only view members of your assigned team");
+        if (!scope.length && ctx.user.role !== "manager") throw new Error("You can only view members of your assigned team");
+        if (!scope.length) {
+          return db.select({ id: users.id, name: users.name, username: users.username, employeeNumber: users.employeeNumber, role: users.role }).from(users).where(and(eq(users.managerId, ctx.user.id), eq(users.isActive, true))).orderBy(users.name, users.username);
+        }
       }
       return db.select({ id: users.id, name: users.name, username: users.username, employeeNumber: users.employeeNumber, role: users.role }).from(users).innerJoin(teamMemberships, eq(teamMemberships.userId, users.id)).where(and(eq(teamMemberships.teamId, input.teamId), eq(users.isActive, true))).orderBy(users.name, users.username);
     }),
