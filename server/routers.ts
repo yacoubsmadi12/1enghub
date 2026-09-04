@@ -164,6 +164,15 @@ export const appRouter = router({
       }
       return db.select({ id: teams.id, name: teams.name, code: teams.code, description: teams.description }).from(teams).innerJoin(teamMemberships, eq(teamMemberships.teamId, teams.id)).where(and(eq(teamMemberships.userId, ctx.user.id), eq(teams.isActive, true))).orderBy(teams.name);
     }),
+    members: protectedProcedure.input(z.object({ teamId: z.string().uuid() })).query(async ({ input, ctx }) => {
+      const db = await getDb();
+      if (!db) return [];
+      if (ctx.user.role !== "top_manager") {
+        const scope = await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.teamId, input.teamId), eq(teamMemberships.userId, ctx.user.id))).limit(1);
+        if (!scope.length) throw new Error("You can only view members of your assigned team");
+      }
+      return db.select({ id: users.id, name: users.name, username: users.username, employeeNumber: users.employeeNumber, role: users.role }).from(users).innerJoin(teamMemberships, eq(teamMemberships.userId, users.id)).where(and(eq(teamMemberships.teamId, input.teamId), eq(users.isActive, true))).orderBy(users.name, users.username);
+    }),
   }),
   notifications: router({
     list: protectedProcedure.query(async ({ ctx }) => {
@@ -673,6 +682,11 @@ export const appRouter = router({
       if (!db) throw new Error("Database unavailable");
       if (input.recipientType === "user" && !input.recipientUserId) throw new Error("A recipient user is required");
       if (input.recipientType === "team" && !input.recipientTeamId) throw new Error("A recipient team is required");
+      if (input.recipientType === "user" && input.recipientUserId) {
+        const asset = (await db.select({ homeTeamId: assets.homeTeamId }).from(assets).where(eq(assets.id, input.assetId)).limit(1))[0];
+        const member = asset && await db.select({ id: teamMemberships.id }).from(teamMemberships).where(and(eq(teamMemberships.teamId, asset.homeTeamId), eq(teamMemberships.userId, input.recipientUserId))).limit(1);
+        if (!member?.length) throw new Error("The selected person is not a member of this asset's team");
+      }
       const result = await db.transaction(async tx => {
         const share = (await tx.insert(assetShares).values({ assetId: input.assetId, recipientType: input.recipientType, recipientUserId: input.recipientUserId, recipientTeamId: input.recipientTeamId, permission: input.permission, expiresAt: input.expiresAt ?? null, grantedById: ctx.user.id }).returning())[0];
         await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_shared", entityType: "asset_share", entityId: share?.id, assetId: input.assetId, metadata: { recipientType: input.recipientType, permission: input.permission } });
