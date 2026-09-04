@@ -32,6 +32,29 @@ async function resolveDirectReviewer(db: NonNullable<Awaited<ReturnType<typeof g
   return (await db.select({ id: users.id }).from(users).where(and(eq(users.role, "top_manager"), eq(users.isActive, true))).limit(1))[0]?.id;
 }
 
+async function purgeUserData(tx: any, userId: string) {
+  const owned = await tx.select({ id: assets.id }).from(assets).where(eq(assets.ownerId, userId));
+  for (const asset of owned) {
+    await tx.delete(assetRelations).where(or(eq(assetRelations.sourceAssetId, asset.id), eq(assetRelations.targetAssetId, asset.id)));
+    await tx.delete(assetShares).where(eq(assetShares.assetId, asset.id));
+    await tx.delete(notifications).where(eq(notifications.assetId, asset.id));
+    await tx.delete(approvals).where(eq(approvals.assetId, asset.id));
+    await tx.delete(assetTags).where(eq(assetTags.assetId, asset.id));
+    await tx.delete(assetDocuments).where(eq(assetDocuments.assetId, asset.id));
+    await tx.delete(assetFiles).where(eq(assetFiles.assetId, asset.id));
+    await tx.delete(assetVersions).where(eq(assetVersions.assetId, asset.id));
+    await tx.delete(assets).where(eq(assets.id, asset.id));
+  }
+  await tx.delete(approvals).where(or(eq(approvals.requestedById, userId), eq(approvals.reviewerId, userId)));
+  await tx.delete(assetFiles).where(eq(assetFiles.uploadedById, userId));
+  await tx.delete(assetVersions).where(eq(assetVersions.submittedById, userId));
+  await tx.delete(assetRelations).where(eq(assetRelations.createdById, userId));
+  await tx.delete(assetShares).where(eq(assetShares.grantedById, userId));
+  await tx.delete(teamMemberships).where(eq(teamMemberships.userId, userId));
+  await tx.update(users).set({ managerId: null }).where(eq(users.managerId, userId));
+  await tx.delete(users).where(eq(users.id, userId));
+}
+
 function inferredImportRole(row: UserImportRow, managerNumbers: Set<string>, managerNames: Set<string>) {
   return managerNumbers.has(row.employeeNumber) || managerNames.has(normalizedPersonName(row.fullName)) ? "manager" as const : "team_member" as const;
 }
@@ -311,19 +334,8 @@ export const appRouter = router({
       if (!target) throw new Error("User not found");
       const targetRole = (await db.select({ role: users.role }).from(users).where(eq(users.id, input.userId)).limit(1))[0]?.role;
       if (targetRole === "top_manager") throw new Error("Top Manager accounts cannot be deleted; change the password or disable the account instead.");
-      const [ownedAssets, uploadedFiles, versions, approvalsRequested, approvalsReviewed, auditRows] = await Promise.all([
-        db.select({ id: assets.id }).from(assets).where(eq(assets.ownerId, input.userId)).limit(1),
-        db.select({ id: assetFiles.id }).from(assetFiles).where(eq(assetFiles.uploadedById, input.userId)).limit(1),
-        db.select({ id: assetVersions.id }).from(assetVersions).where(eq(assetVersions.submittedById, input.userId)).limit(1),
-        db.select({ id: approvals.id }).from(approvals).where(eq(approvals.requestedById, input.userId)).limit(1),
-        db.select({ id: approvals.id }).from(approvals).where(eq(approvals.reviewerId, input.userId)).limit(1),
-        db.select({ id: auditEvents.id }).from(auditEvents).where(eq(auditEvents.actorId, input.userId)).limit(1),
-      ]);
-      if (ownedAssets.length || uploadedFiles.length || versions.length || approvalsRequested.length || approvalsReviewed.length || auditRows.length) throw new Error("This user has governed history or assets. Disable the account instead of deleting it to preserve audit integrity.");
       await db.transaction(async tx => {
-        await tx.delete(teamMemberships).where(eq(teamMemberships.userId, input.userId));
-        await tx.update(users).set({ managerId: null }).where(eq(users.managerId, input.userId));
-        await tx.delete(users).where(eq(users.id, input.userId));
+        await purgeUserData(tx, input.userId);
         await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: input.userId, metadata: { event: "USER_DELETED", username: target.username } });
       });
       return { success: true };
@@ -342,23 +354,7 @@ export const appRouter = router({
           if (!target) { skipped.push(userId); continue; }
           const targetRole = (await tx.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1))[0]?.role;
           if (targetRole === "top_manager") { skipped.push(userId); continue; }
-          const [ownedAssets, uploadedFiles, versions, approvalsRequested, approvalsReviewed, auditRows] = await Promise.all([
-            tx.select({ id: assets.id }).from(assets).where(eq(assets.ownerId, userId)).limit(1),
-            tx.select({ id: assetFiles.id }).from(assetFiles).where(eq(assetFiles.uploadedById, userId)).limit(1),
-            tx.select({ id: assetVersions.id }).from(assetVersions).where(eq(assetVersions.submittedById, userId)).limit(1),
-            tx.select({ id: approvals.id }).from(approvals).where(eq(approvals.requestedById, userId)).limit(1),
-            tx.select({ id: approvals.id }).from(approvals).where(eq(approvals.reviewerId, userId)).limit(1),
-            tx.select({ id: auditEvents.id }).from(auditEvents).where(eq(auditEvents.actorId, userId)).limit(1),
-          ]);
-          if (ownedAssets.length || uploadedFiles.length || versions.length || approvalsRequested.length || approvalsReviewed.length || auditRows.length) {
-            await tx.update(users).set({ isActive: false, updatedAt: new Date() }).where(eq(users.id, userId));
-            await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: userId, metadata: { event: "USER_DISABLED_BY_BULK_DELETE", username: target.username } });
-            disabled += 1;
-            continue;
-          }
-          await tx.delete(teamMemberships).where(eq(teamMemberships.userId, userId));
-          await tx.update(users).set({ managerId: null }).where(eq(users.managerId, userId));
-          await tx.delete(users).where(eq(users.id, userId));
+          await purgeUserData(tx, userId);
           await tx.insert(auditEvents).values({ actorId: ctx.user.id, action: "asset_updated", entityType: "user", entityId: userId, metadata: { event: "USER_DELETED", username: target.username } });
           deleted += 1;
         }

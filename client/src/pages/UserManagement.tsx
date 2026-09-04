@@ -62,8 +62,8 @@ export default function UserManagement() {
   const resetPassword = trpc.administration.resetPassword.useMutation({ onSuccess: () => { setNotice("Password reset successfully. Share the temporary password securely."); setError(""); }, onError: mutationError => setError(mutationError.message) });
   const setActive = trpc.administration.setActive.useMutation({ onSuccess: () => { setNotice("Account status updated."); setError(""); refresh(); }, onError: mutationError => setError(mutationError.message) });
   const assignTeam = trpc.administration.assignTeam.useMutation({ onSuccess: () => { setNotice("Team assignment updated."); setError(""); }, onError: mutationError => setError(mutationError.message) });
-  const deleteUser = trpc.administration.deleteUser.useMutation({ onSuccess: () => { setNotice("User deleted or disabled."); setError(""); refresh(); }, onError: mutationError => setError(mutationError.message) });
-  const deleteUsers = trpc.administration.deleteUsers.useMutation({ onSuccess: result => { setNotice(`${result.deleted} users deleted, ${result.disabled} governed accounts disabled.`); setError(""); setSelectedIds([]); refresh(); }, onError: mutationError => setError(mutationError.message) });
+  const deleteUser = trpc.administration.deleteUser.useMutation({ onSuccess: () => { setNotice("User and linked governed records deleted."); setError(""); refresh(); }, onError: mutationError => setError(mutationError.message) });
+  const deleteUsers = trpc.administration.deleteUsers.useMutation({ onSuccess: result => { setNotice(`${result.deleted} users deleted successfully.`); setError(""); setSelectedIds([]); refresh(); }, onError: mutationError => setError(mutationError.message) });
 
   const filteredUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
