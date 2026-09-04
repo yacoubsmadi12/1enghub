@@ -20,6 +20,7 @@ BEGIN
     WHERE con.contype = 'f'
       AND referenced_ns.nspname = 'public'
       AND referenced_cls.relname = 'assets'
+      AND NOT (ns.nspname = 'public' AND cls.relname = 'audit_events')
     GROUP BY ns.nspname, cls.relname, con.conname
   LOOP
     EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', constraint_row.table_schema, constraint_row.table_name, constraint_row.constraint_name);
