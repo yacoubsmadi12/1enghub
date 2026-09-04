@@ -147,7 +147,7 @@ export const appRouter = router({
       const teamsRows = await db.select({ id: teams.id, name: teams.name }).from(teams);
       const usersRows = await db.select({ id: users.id, name: users.name, username: users.username, role: users.role }).from(users);
       const teamName = new Map(teamsRows.map(item => [item.id, item.name]));
-      const userName = new Map(usersRows.map(item => [item.id, item.name || item.username || "Unknown"]));
+      const userName = new Map(usersRows.map(item => [item.id, item.name?.trim() || "Full name not recorded"]));
       const teamScoreMap = visibleAssets.reduce((map, item) => { const current = map.get(item.homeTeamId) || { teamId: item.homeTeamId, team: teamName.get(item.homeTeamId) || "Unassigned", successful: 0, hoursSaved: 0, costSaved: 0, score: 0 }; const successful = ["approved", "published", "active"].includes(item.status); current.successful += successful ? 1 : 0; current.hoursSaved += item.estimatedHoursSaved || 0; current.costSaved += item.estimatedCostSaved || 0; current.score += (successful ? 25 : 5) + Math.min(item.estimatedHoursSaved || 0, 100); map.set(item.homeTeamId, current); return map; }, new Map<string, { teamId: string; team: string; successful: number; hoursSaved: number; costSaved: number; score: number }>());
       const teamScores = Array.from(teamScoreMap.values()).sort((a, b) => b.score - a.score).slice(0, 6);
       const contributorMap = new Map<string, { userId: string; user: string; uploads: number; successful: number; hoursSaved: number; score: number }>();
