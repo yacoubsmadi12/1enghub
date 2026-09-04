@@ -1,3 +1,4 @@
+import BrandMark from "@/components/BrandMark";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
@@ -91,7 +92,7 @@ function LoginScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
     <div className="login-layout">
       <section className="login-story hidden xl:block"><div className="eyebrow"><span className="live-dot" /> Network operations intelligence</div><h2>Keep every signal,<br /><span>decision, and asset</span><br />in motion.</h2><p>One governed memory for the teams building the networks that connect everything.</p><div className="story-metrics"><div><strong>24/7</strong><span>Operational visibility</span></div><div><strong>100%</strong><span>Traceable releases</span></div></div></section>
       <div className="login-card login-card-polished">
-        <div className="login-card-header"><div className="login-brand-lockup"><div className="brand-mark"><span>EH</span></div><div><strong>ENGHUB</strong><span>Engineering memory</span></div></div><span className="login-secure-badge"><LockKeyhole size={12} /> Secure</span></div>
+        <div className="login-card-header"><div className="login-brand-lockup"><BrandMark /><div><strong>ENGHUB</strong><span>Engineering memory</span></div></div><span className="login-secure-badge"><LockKeyhole size={12} /> Secure</span></div>
         <div className="login-divider" />
         <div className="eyebrow"><span className="live-dot" /> Internal workspace</div>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Welcome back<span className="text-cyan-300">.</span></h1>
@@ -206,12 +207,12 @@ export default function Home() {
     return matchesType && matchesLifecycle && matchesTeam && matchesClassification && haystack.includes(query.toLowerCase());
   }).sort((a, b) => sortBy === "Name" ? a.name.localeCompare(b.name) : sortBy === "Most used" ? b.usage.localeCompare(a.usage) : 0),[activeFilter, lifecycleFilter, teamFilter, classificationFilter, query, sortBy, sourceAssets]);
 
-  if (auth.loading) return <div className="login-screen"><div className="login-card text-center"><div className="brand-mark mx-auto"><span>EH</span></div><p className="mt-5 text-sm text-slate-400">Loading secure workspace...</p></div></div>;
+  if (auth.loading) return <div className="login-screen"><div className="login-card text-center"><BrandMark className="mx-auto" /><p className="mt-5 text-sm text-slate-400">Loading secure workspace...</p></div></div>;
   if (!auth.isAuthenticated) return <LoginScreen onAuthenticated={auth.refresh} />;
 
   return <div className="enghub-app">
     <aside className={cn("sidebar", mobileNav && "sidebar-open")}>
-      <div className="brand-row"><div className="brand-mark"><span>EH</span></div><div><div className="brand-name">ENGHUB</div><div className="brand-subtitle">Engineering memory</div></div><button onClick={() => setMobileNav(false)} className="ml-auto rounded-lg p-2 text-slate-500 lg:hidden"><X size={18} /></button></div>
+      <div className="brand-row"><BrandMark /><div><div className="brand-name">ENGHUB</div><div className="brand-subtitle">Engineering memory</div></div><button onClick={() => setMobileNav(false)} className="ml-auto rounded-lg p-2 text-slate-500 lg:hidden"><X size={18} /></button></div>
       <div className="workspace-switch"><div className="workspace-avatar">N</div><div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-slate-200">Network Operations</div><div className="mt-0.5 text-[10px] text-slate-500">Engineering workspace</div></div><ChevronDown size={15} className="text-slate-600" /></div>
       <div className="nav-label">Workspace</div><nav className="space-y-1">{visibleNavItems.map(item => { const targetPath = item.label === "Teams" && user?.role !== "top_manager" ? "/workspace/teams" : item.path; const active = targetPath === "/" ? currentLocation === "/" : currentLocation.startsWith(targetPath); return <button key={item.label} onClick={() => { setMobileNav(false); navigate(targetPath); }} className={cn("nav-item", active && "nav-item-active")}><item.icon size={17} /><span>{item.label}</span>{active && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_#67e8f9]" />}</button>; })}</nav>
       <div className="nav-label mt-7">Governance</div><nav className="space-y-1">{visibleGovernanceItems.map(item => <button key={item.label} onClick={() => { setMobileNav(false); navigate(item.path); }} className={cn("nav-item", currentLocation.startsWith(item.path) && "nav-item-active")}><item.icon size={17} /><span>{item.label}</span>{item.count && <span className="ml-auto rounded-md bg-white/[0.07] px-1.5 py-0.5 text-[10px] font-semibold text-slate-400">{item.count}</span>}</button>)}</nav>

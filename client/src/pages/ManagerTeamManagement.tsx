@@ -1,3 +1,4 @@
+import BrandMark from "@/components/BrandMark";
 import { useEffect, useState, type ChangeEvent } from "react";
 import { Download, FileSpreadsheet, Plus, Save, ShieldCheck, UploadCloud, UsersRound, X } from "lucide-react";
 import { Link } from "wouter";
@@ -73,7 +74,7 @@ export default function ManagerTeamManagement() {
   if (!user || user.role !== "manager") return <div className="min-h-screen bg-[#080f19] p-8 text-sm text-rose-300"><Link href="/" className="text-cyan-300">Return to ENGHUB</Link><p className="mt-6">Team member management is restricted to Managers.</p></div>;
 
   return <div className="min-h-screen bg-[#080f19] text-slate-200">
-    <header className="border-b border-white/[0.07] bg-[#0b1421] px-6 py-4"><div className="mx-auto flex max-w-7xl items-center justify-between"><div className="flex items-center gap-3"><div className="brand-mark"><span>EH</span></div><div><div className="brand-name">ENGHUB</div><div className="text-[10px] text-slate-500">Team access console</div></div></div><Link href="/" className="text-xs text-cyan-300">Back to workspace</Link></div></header>
+    <header className="border-b border-white/[0.07] bg-[#0b1421] px-6 py-4"><div className="mx-auto flex max-w-7xl items-center justify-between"><div className="flex items-center gap-3"><BrandMark /><div><div className="brand-name">ENGHUB</div><div className="text-[10px] text-slate-500">Team access console</div></div></div><Link href="/" className="text-xs text-cyan-300">Back to workspace</Link></div></header>
     <main className="mx-auto max-w-7xl px-6 py-10">
       <div className="eyebrow"><ShieldCheck size={13} /> Team access governance</div>
       <div className="mt-3 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-3xl font-semibold tracking-tight text-white">My team members</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">Create accounts only for employees who report directly to you. Top Managers retain organization-wide control.</p></div><Button onClick={() => { setFormOpen(open => !open); setNotice(""); setError(""); }} className="bg-cyan-400 text-slate-950 hover:bg-cyan-300"><Plus size={15} /> {formOpen ? "Close form" : "Create team member"}</Button></div>
