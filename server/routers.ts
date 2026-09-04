@@ -211,6 +211,15 @@ export const appRouter = router({
       if (!db) return [];
       return db.select({ id: users.id, username: users.username, employeeNumber: users.employeeNumber, managerId: users.managerId, name: users.name, email: users.email, role: users.role, isActive: users.isActive, lastSignedIn: users.lastSignedIn }).from(users).orderBy(users.name);
     }),
+    listAudit: adminProcedure.input(z.object({ query: z.string().trim().max(120).optional(), action: z.string().max(48).optional(), result: z.string().max(32).optional(), limit: z.number().int().min(1).max(200).default(100) }).optional()).query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return [];
+      const filters = [];
+      if (input?.query) filters.push(or(ilike(users.name, `%${input.query}%`), ilike(users.username, `%${input.query}%`), ilike(assets.name, `%${input.query}%`)));
+      if (input?.action) filters.push(eq(auditEvents.action, input.action as typeof auditEvents.action.enumValues[number]));
+      if (input?.result) filters.push(eq(auditEvents.result, input.result));
+      return db.select({ id: auditEvents.id, action: auditEvents.action, entityType: auditEvents.entityType, entityId: auditEvents.entityId, assetId: auditEvents.assetId, result: auditEvents.result, metadata: auditEvents.metadata, createdAt: auditEvents.createdAt, actorName: users.name, actorUsername: users.username, assetName: assets.name }).from(auditEvents).leftJoin(users, eq(auditEvents.actorId, users.id)).leftJoin(assets, eq(auditEvents.assetId, assets.id)).where(filters.length ? and(...filters) : undefined).orderBy(desc(auditEvents.createdAt)).limit(input?.limit ?? 100);
+    }),
     createUser: adminProcedure.input(z.object({ username: z.string().trim().min(3).max(64), employeeNumber: z.string().trim().max(64).optional().or(z.literal("")), name: z.string().trim().min(2).max(160), email: z.string().trim().email().max(320).optional().or(z.literal("")), role: userRoleSchema, temporaryPassword: z.string().min(8).max(128), managerId: z.string().uuid().optional(), teamId: z.string().uuid().optional(), isActive: z.boolean().default(true) })).mutation(async ({ input, ctx }) => {
       const db = await getDb();
       if (!db) throw new Error("Database unavailable");
