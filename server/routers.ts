@@ -209,7 +209,14 @@ export const appRouter = router({
     listUsers: adminProcedure.query(async () => {
       const db = await getDb();
       if (!db) return [];
-      return db.select({ id: users.id, username: users.username, employeeNumber: users.employeeNumber, managerId: users.managerId, name: users.name, email: users.email, role: users.role, isActive: users.isActive, lastSignedIn: users.lastSignedIn }).from(users).orderBy(users.name);
+      const [rows, managers, memberships] = await Promise.all([
+        db.select({ id: users.id, username: users.username, employeeNumber: users.employeeNumber, managerId: users.managerId, name: users.name, email: users.email, role: users.role, isActive: users.isActive, lastSignedIn: users.lastSignedIn }).from(users).orderBy(users.name),
+        db.select({ id: users.id, name: users.name, username: users.username }).from(users),
+        db.select({ userId: teamMemberships.userId, teamId: teams.id, teamName: teams.name }).from(teamMemberships).innerJoin(teams, eq(teamMemberships.teamId, teams.id)).where(eq(teams.isActive, true)),
+      ]);
+      const managerById = new Map(managers.map(item => [item.id, item.name?.trim() || item.username || "No manager"]));
+      const teamByUser = new Map(memberships.map(item => [item.userId, { teamId: item.teamId, teamName: item.teamName }]));
+      return rows.map(row => ({ ...row, managerName: row.managerId ? managerById.get(row.managerId) ?? "No manager" : null, ...(teamByUser.get(row.id) ?? { teamId: null, teamName: null }) }));
     }),
     listAudit: adminProcedure.input(z.object({ query: z.string().trim().max(120).optional(), action: z.string().max(48).optional(), result: z.string().max(32).optional(), limit: z.number().int().min(1).max(200).default(100) }).optional()).query(async ({ input }) => {
       const db = await getDb();
